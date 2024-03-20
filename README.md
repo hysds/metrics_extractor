@@ -57,6 +57,7 @@ This guide provides a quick way to get started with our project. Please see our 
     $ git clone https://github.com/hysds/metrics_extractor/
 
 The main tool is:
+
     metrics_extractor/metrics_extractor/hysds_metrics_es_extractor.py
 
 <!-- ☝️ Replace with a numbered list of how to set up your software prior to running ☝️ -->
@@ -81,6 +82,7 @@ Verbosity options:
 ### Usage Examples
 
 Quick start examples:
+
     $ hysds_metrics_es_extractor.py --verbose --es_url="https://my_pcm_venue/mozart_es/logstash-*/_search" --days_back=21
     $ hysds_metrics_es_extractor.py --debug --es_url="https://my_pcm_venue/metrics_es/logstash-*/_search"  --time_start=20240101T000000Z --time_end=20240313T000000Z
 
@@ -92,13 +94,10 @@ This will produce an output csv report of the file name "job_metrics {hostname} 
 
 See our [CHANGELOG.md](CHANGELOG.md) for a history of our changes.
 
-See our [releases page]([INSERT LINK TO YOUR RELEASES PAGE]) for our key versioned releases.
-
 <!-- ☝️ Replace with links to your changelog and releases page ☝️ -->
 
 ## Frequently Asked Questions (FAQ)
 
-[INSERT LINK TO FAQ PAGE OR PROVIDE FAQ INLINE HERE]
 <!-- example link to FAQ PAGE>
 Questions about our project? Please see our: [FAQ]([INSERT LINK TO FAQ / DISCUSSION BOARD])
 -->
@@ -118,7 +117,6 @@ No questions yet. Propose a question to be added here by reaching out to our con
 
 ## Contributing
 
-[INSERT LINK TO CONTRIBUTING GUIDE OR FILL INLINE HERE]
 <!-- example link to CONTRIBUTING.md>
 Interested in contributing to our project? Please see our: [CONTRIBUTING.md](CONTRIBUTING.md)
 -->
@@ -132,14 +130,15 @@ Interested in contributing to our project? Please see our: [CONTRIBUTING.md](CON
 **Working on your first pull request?** See guide: [How to Contribute to an Open Source Project on GitHub](https://kcd.im/pull-request)
 -->
 
-[INSERT LINK TO YOUR CODE_OF_CONDUCT.md OR SHARE TEXT HERE]
+
 <!-- example link to CODE_OF_CONDUCT.md>
 For guidance on how to interact with our team, please see our code of conduct located at: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 -->
 
 <!-- ☝️ Replace with a text describing how people may contribute to your project, or link to your contribution guide directly ☝️ -->
 
-[INSERT LINK TO YOUR GOVERNANCE.md OR SHARE TEXT HERE]
+
+
 <!-- example link to GOVERNANCE.md>
 For guidance on our governance approach, including decision-making process and our various roles, please see our governance model at: [GOVERNANCE.md](GOVERNANCE.md)
 -->
@@ -151,7 +150,6 @@ See our: [LICENSE](LICENSE)
 
 ## Support
 
-[INSERT CONTACT INFORMATION OR PROFILE LINKS TO MAINTAINERS AMONG COMMITTER LIST]
 
 <!-- example list of contacts>
 Key points of contact are: [@github-user-1]([INSERT LINK TO GITHUB PROFILE]) [@github-user-2]([INSERT LINK TO GITHUB PROFILE])
