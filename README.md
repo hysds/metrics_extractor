@@ -43,7 +43,7 @@ Metrics extractions are important to get actuals from production, which can then
 
 ## Quick Start
 
-This guide provides a quick way to get started with our project. Please see our [docs]([INSERT LINK TO DOCS SITE / WIKI HERE]) for a more comprehensive overview.
+This guide provides a quick way to get started with our project.
 
 ### Requirements
 
@@ -65,17 +65,20 @@ The main tool is:
 ### Run Instructions
 
 The hysds_metrics_es_extractor.py tool requires a HySDS Metrics ES url endpoint, and a temporal range to query against.
-The URL endpoint typically has the form
-- https://my_venue/mozart_es/logstash-*/_search
-- https://my_venue/metrics_es/logstash-*/_search
+The ES URL endpoint typically has the form:
+
+- https://my_venue/__mozart_es__/logstash-*/_search
+- https://my_venue/__metrics_es__/logstash-*/_search
 
 The temporal range can be provided in one of two ways:
-1. --days_back=NN , where NN is the number of days back to search starting from "now".
-2. --time_start=20240101T000000Z --time_end=20240313T000000Z , where the timestamps extents are in UTC format with the trailing "Z".
+
+1. __--days_back__=NN , where NN is the number of days back to search starting from "now".
+2. __--time_start__=20240101T000000Z --time_end=20240313T000000Z , where the timestamps extents are in UTC format with the trailing "Z".
 
 Verbosity options:
-1. --verbose
-2. --debug
+
+1. __--verbose__
+2. __--debug__
 
 <!-- ☝️ Replace with a numbered list of your run instructions, including expected results ☝️ -->
 
@@ -86,7 +89,9 @@ Quick start examples:
     $ hysds_metrics_es_extractor.py --verbose --es_url="https://my_pcm_venue/mozart_es/logstash-*/_search" --days_back=21
     $ hysds_metrics_es_extractor.py --debug --es_url="https://my_pcm_venue/metrics_es/logstash-*/_search"  --time_start=20240101T000000Z --time_end=20240313T000000Z
 
-This will produce an output csv report of the file name "job_metrics {hostname} {start}-{end} spanning {duration_days} days.csv".
+This will produce an output csv report of the file name
+
+    "job_metrics {hostname} {start}-{end} spanning {duration_days} days.csv".
 
 <!-- ☝️ Replace with a list of your usage examples, including screenshots if possible, and link to external documentation for details ☝️ -->
 
