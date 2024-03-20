@@ -11,7 +11,7 @@
 
 </div>
 
-<pre align="center">Tool to extract [HySDS](https://github.com/hysds/) metrics from ElasticSearch/OpenSearch to export out reports.</pre>
+<pre align="center">Tool for extracting HySDS metrics from ElasticSearch/OpenSearch out as aggregrates for reporting and cost-production modeling.</pre>
 <!-- ☝️ Replace with a single sentence describing the purpose of your repo / proj ☝️ -->
 
 <!-- Header block for project -->
@@ -67,12 +67,17 @@ The main tool is:
 ### Run Instructions
 
 The hysds_metrics_es_extractor.py tool requires a HySDS Metrics ES url endpoint, and a temporal range to query against.
-The ES URL endpoint typically has the form:
+
+#### Command line arguments for hysds_metrics_es_extractor.py
+
+The ES URL endpoint:
+
+* __--es_url__=my_es_url , where the url is the ES search endpoint for logstash-* indices.
+
+The es_url typically has the form:
 
     https://my_venue/__mozart_es__/logstash-*/_search
     https://my_venue/__metrics_es__/logstash-*/_search
-
-#### Command line arguments for hysds_metrics_es_extractor.py
 
 The temporal range can be provided in one of two ways:
 
