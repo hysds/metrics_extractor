@@ -28,7 +28,8 @@ Metrics extractions are important to get actuals from production, which can then
 
 * Extracts actual runtime metrics from a HySDS venue.
 * Extracts all metrics enumerations of each job type and its set of compute instance types.
-* Metrics extracts uses ES' built-in aggregrations API to compute statistics on the ES server side.
+* Leverages ES' built-in aggregrations API to compute statistics on the ES server side.
+* Exports agreggration job metrics to CSV
 
 <!-- ☝️ Replace with a bullet-point list of your features ☝️ -->
 
@@ -48,7 +49,7 @@ This guide provides a quick way to get started with our project.
 ### Requirements
 
 * Python 3.8+
-* access to ES endpoint containing the logstash indices of a HySDS Metrics service.
+* Access to ES endpoint containing the logstash indices of a HySDS Metrics service.
   
 <!-- ☝️ Replace with a numbered list of your requirements, including hardware if applicable ☝️ -->
 
@@ -67,8 +68,10 @@ The main tool is:
 The hysds_metrics_es_extractor.py tool requires a HySDS Metrics ES url endpoint, and a temporal range to query against.
 The ES URL endpoint typically has the form:
 
-- https://my_venue/__mozart_es__/logstash-*/_search
-- https://my_venue/__metrics_es__/logstash-*/_search
+    https://my_venue/__mozart_es__/logstash-*/_search
+    https://my_venue/__metrics_es__/logstash-*/_search
+
+#### Command line arguments for hysds_metrics_es_extractor.py
 
 The temporal range can be provided in one of two ways:
 
@@ -89,9 +92,30 @@ Quick start examples:
     $ hysds_metrics_es_extractor.py --verbose --es_url="https://my_pcm_venue/mozart_es/logstash-*/_search" --days_back=21
     $ hysds_metrics_es_extractor.py --debug --es_url="https://my_pcm_venue/metrics_es/logstash-*/_search"  --time_start=20240101T000000Z --time_end=20240313T000000Z
 
-This will produce an output csv report of the file name
+### Example outputs
+
+hysds_metrics_es_extractor.py will produce an output csv report of job metrics.
+
+The file name is composed of the following tokens:
 
     "job_metrics {hostname} {start}-{end} spanning {duration_days} days.csv".
+
+The results of querying ES for logstash aggregrates will be exported out for the following fields:
+
+    job_type
+    job runtime (minutes avg)
+    container runtime (minutes avg)
+    stage-in size (GB avg)
+    stage-out size (GB avg)
+    instance type	stage-in rate (MB/s avg)
+    stage-out rate (MB/s avg)
+    daily count avg
+    count over duration
+    duration days
+
+This collapses the aggregrates to all enumerations of job_type-to-instance_type pairings.
+
+Note that the aggregates are constrained to only samples with successful jobs (exit code 0) and ignores failed jobs so as to not skew the timing results.
 
 <!-- ☝️ Replace with a list of your usage examples, including screenshots if possible, and link to external documentation for details ☝️ -->
 
