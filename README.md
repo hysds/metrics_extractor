@@ -7,12 +7,12 @@
 <!-- ☝️ Replace with your logo (if applicable) via ![](https://uri-to-your-logo-image) ☝️ -->
 <!-- ☝️ If you see logo rendering errors, make sure you're not using indentation, or try an HTML IMG tag -->
 
-<h1 align="center">[INSERT YOUR REPO / PROJ NAME HERE]</h1>
+<h1 align="center">HySDS Metrics Extractor</h1>
 <!-- ☝️ Replace with your repo name ☝️ -->
 
 </div>
 
-<pre align="center">[INSERT A SINGLE SENTENCE DESCRIBING THE PURPOSE OF YOUR REPO / PROJ]</pre>
+<pre align="center">Tool to extract HySDS metrics from ES to export out reports.</pre>
 <!-- ☝️ Replace with a single sentence describing the purpose of your repo / proj ☝️ -->
 
 <!-- Header block for project -->
@@ -23,17 +23,19 @@
 [INSERT SCREENSHOT OF YOUR SOFTWARE, IF APPLICABLE]
 <!-- ☝️ Screenshot of your software (if applicable) via ![](https://uri-to-your-screenshot) ☝️ -->
 
-[INSERT MORE DETAILED DESCRIPTION OF YOUR REPOSITORY HERE]
+Tools for extracting metrics out of captured runtime performance of jobs from HySDS metrics in Elasticsearch/OpenSearch. These reports can be used by ops and can also be used as input to other cost-production models for anlaysis.
 <!-- ☝️ Replace with a more detailed description of your repository, including why it was made and whom its intended for.  ☝️ -->
 
-[INSERT LIST OF IMPORTANT PROJECT / REPO LINKS HERE]
+Metrics extractions are important to get actuals from production, which can then be used as input for modeling estimations based on actuals.
 <!-- example links>
 [Website]([INSERT WEBSITE LINK HERE]) | [Docs/Wiki]([INSERT DOCS/WIKI SITE LINK HERE]) | [Discussion Board]([INSERT DISCUSSION BOARD LINK HERE]) | [Issue Tracker]([INSERT ISSUE TRACKER LINK HERE])
 -->
 
 ## Features
 
-* [INSERT LIST OF FEATURES IMPORTANT TO YOUR USERS HERE]
+* Extracts actual runtime metrics from a HySDS venue.
+* It extracts all enumerations of each job type and compute instance type.
+* Metrics are extracts uses ES' built-in aggregrations API to compute statistics on the ES server side.
   
 <!-- ☝️ Replace with a bullet-point list of your features ☝️ -->
 
@@ -52,7 +54,8 @@ This guide provides a quick way to get started with our project. Please see our 
 
 ### Requirements
 
-* [INSERT LIST OF REQUIREMENTS HERE]
+* Python 3.8+
+* access to ES endpoint containing the logstash indices of a HySDS Metrics service.
   
 <!-- ☝️ Replace with a numbered list of your requirements, including hardware if applicable ☝️ -->
 
@@ -64,27 +67,31 @@ This guide provides a quick way to get started with our project. Please see our 
 
 ### Run Instructions
 
-1. [INSERT STEP-BY-STEP RUN INSTRUCTIONS HERE, WITH OPTIONAL SCREENSHOTS]
+
+The hysds_metrics_es_extractor.py tool requires a HySDS Metrics ES url endpoint, and a temporal range to query against.
+The URL endpoint typically has the form
+- https://my_venue/mozart_es/logstash-*/_search
+- https://my_venue/metrics_es/logstash-*/_search
+
+The temporal range can be provided in one of two ways:
+1. --days_back=NN , where NN is the number of days back to search starting from "now".
+2. --time_start=20240101T000000Z --time_end=20240313T000000Z , where the timestamps extents are in UTC format with the trailing "Z".
+
+Verbosity options:
+1. --verbose
+2. --debug
 
 <!-- ☝️ Replace with a numbered list of your run instructions, including expected results ☝️ -->
 
 ### Usage Examples
 
-* [INSERT LIST OF COMMON USAGE EXAMPLES HERE, WITH OPTIONAL SCREENSHOTS]
+Quick start examples:
+* $ hysds_metrics_es_extractor.py --verbose --es_url="https://my_pcm_venue/mozart_es/logstash-*/_search" --days_back=21
+* $ hysds_metrics_es_extractor.py --debug --es_url="https://my_pcm_venue/metrics_es/logstash-*/_search"  --time_start=20240101T000000Z --time_end=20240313T000000Z
+
+This will produce an output csv report of the file name "job_metrics {hostname} {start}-{end} spanning {duration_days} days.csv".
 
 <!-- ☝️ Replace with a list of your usage examples, including screenshots if possible, and link to external documentation for details ☝️ -->
-
-### Build Instructions (if applicable)
-
-1. [INSERT STEP-BY-STEP BUILD INSTRUCTIONS HERE, WITH OPTIONAL SCREENSHOTS]
-
-<!-- ☝️ Replace with a numbered list of your build instructions, including expected results / outputs with optional screenshots ☝️ -->
-
-### Test Instructions (if applicable)
-
-1. [INSERT STEP-BY-STEP TEST INSTRUCTIONS HERE, WITH OPTIONAL SCREENSHOTS]
-
-<!-- ☝️ Replace with a numbered list of your test instructions, including expected results / outputs with optional screenshots ☝️ -->
 
 ## Changelog
 
