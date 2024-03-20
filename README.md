@@ -11,7 +11,7 @@
 
 </div>
 
-<pre align="center">Tool to extract HySDS metrics from ES to export out reports.</pre>
+<pre align="center">Tool to extract [HySDS](https://github.com/hysds/) metrics from ElasticSearch/OpenSearch to export out reports.</pre>
 <!-- ☝️ Replace with a single sentence describing the purpose of your repo / proj ☝️ -->
 
 <!-- Header block for project -->
@@ -26,7 +26,7 @@ Metrics extractions are important to get actuals from production, which can then
 
 ## Features
 
-* Extracts actual runtime metrics from a HySDS venue.
+* Extracts actual runtime metrics from a [HySDS](https://github.com/hysds/) venue.
 * Extracts all metrics enumerations of each job type and its set of compute instance types.
 * Leverages ES' built-in aggregrations API to compute statistics on the ES server side.
 * Exports agreggration job metrics to CSV
@@ -49,7 +49,8 @@ This guide provides a quick way to get started with our project.
 ### Requirements
 
 * Python 3.8+
-* Access to ES endpoint containing the logstash indices of a HySDS Metrics service.
+* Access to ES endpoint containing the "logstash-*" indices of a HySDS Metrics service.
+* Has been tested on ElasticSearch v7.10.X and OpenSearch v2.9.X
   
 <!-- ☝️ Replace with a numbered list of your requirements, including hardware if applicable ☝️ -->
 
@@ -75,13 +76,13 @@ The ES URL endpoint typically has the form:
 
 The temporal range can be provided in one of two ways:
 
-1. __--days_back__=NN , where NN is the number of days back to search starting from "now".
-2. __--time_start__=20240101T000000Z --time_end=20240313T000000Z , where the timestamps extents are in UTC format with the trailing "Z".
+* __--days_back__=NN , where NN is the number of days back to search starting from "now".
+* __--time_start__=20240101T000000Z --time_end=20240313T000000Z , where the timestamps extents are in UTC format with the trailing "Z".
 
 Verbosity options:
 
-1. __--verbose__
-2. __--debug__
+* __--verbose__
+* __--debug__
 
 <!-- ☝️ Replace with a numbered list of your run instructions, including expected results ☝️ -->
 
@@ -102,16 +103,17 @@ The file name is composed of the following tokens:
 
 The results of querying ES for logstash aggregrates will be exported out for the following fields:
 
-    job_type
-    job runtime (minutes avg)
-    container runtime (minutes avg)
-    stage-in size (GB avg)
-    stage-out size (GB avg)
-    instance type	stage-in rate (MB/s avg)
-    stage-out rate (MB/s avg)
-    daily count avg
-    count over duration
-    duration days
+* __job_type__: the algorhtm container and version
+* __job runtime (minutes avg)__: the mean total runtime of the stage-in, container runs, and stage-out
+* __container runtime (minutes avg)__: the mean runtime of the container runs of the job. there can be multiple containers so this is the average of the set.
+* __stage-in size (GB avg)__: the mean size of data localized from storage (e.g. AWS S3) into the compute node Verdi worker.
+* __stage-out size (GB avg)__: the mean size of data publish from compute node Verdi worker out to storage (e.g. AWS S3).
+* __instance type__: the compute node (e.g. AWS EC2) type used for running the job
+* __stage-in rate (MB/s avg)__: the mean transfer rate of data localized into the worker.
+* __stage-out rate (MB/s avg)__: the mean transfer rate of data pubished out of the worker.
+* __daily count avg__: the mean count of successful jobs sampled over the given duration.
+* __count over duration__: the total count of successful jobs sampled over the given duration.
+* __duration days__: the sampled duration to query ES of job metrics.
 
 This collapses the aggregrates to all enumerations of job_type-to-instance_type pairings.
 
