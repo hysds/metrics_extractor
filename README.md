@@ -34,9 +34,9 @@ Metrics extractions are important to get actuals from production, which can then
 ## Features
 
 * Extracts actual runtime metrics from a HySDS venue.
-* It extracts all enumerations of each job type and compute instance type.
-* Metrics are extracts uses ES' built-in aggregrations API to compute statistics on the ES server side.
-  
+* Extracts all metrics enumerations of each job type and its set of compute instance types.
+* Metrics extracts uses ES' built-in aggregrations API to compute statistics on the ES server side.
+
 <!-- ☝️ Replace with a bullet-point list of your features ☝️ -->
 
 ## Contents
@@ -61,12 +61,14 @@ This guide provides a quick way to get started with our project. Please see our 
 
 ### Setup Instructions
 
-1. [INSERT STEP-BY-STEP SETUP INSTRUCTIONS HERE, WITH OPTIONAL SCREENSHOTS]
-   
+    $ git clone https://github.com/hysds/metrics_extractor/
+
+The main tool is:
+    metrics_extractor/metrics_extractor/hysds_metrics_es_extractor.py
+
 <!-- ☝️ Replace with a numbered list of how to set up your software prior to running ☝️ -->
 
 ### Run Instructions
-
 
 The hysds_metrics_es_extractor.py tool requires a HySDS Metrics ES url endpoint, and a temporal range to query against.
 The URL endpoint typically has the form
@@ -86,8 +88,8 @@ Verbosity options:
 ### Usage Examples
 
 Quick start examples:
-* $ hysds_metrics_es_extractor.py --verbose --es_url="https://my_pcm_venue/mozart_es/logstash-*/_search" --days_back=21
-* $ hysds_metrics_es_extractor.py --debug --es_url="https://my_pcm_venue/metrics_es/logstash-*/_search"  --time_start=20240101T000000Z --time_end=20240313T000000Z
+    $ hysds_metrics_es_extractor.py --verbose --es_url="https://my_pcm_venue/mozart_es/logstash-*/_search" --days_back=21
+    $ hysds_metrics_es_extractor.py --debug --es_url="https://my_pcm_venue/metrics_es/logstash-*/_search"  --time_start=20240101T000000Z --time_end=20240313T000000Z
 
 This will produce an output csv report of the file name "job_metrics {hostname} {start}-{end} spanning {duration_days} days.csv".
 
