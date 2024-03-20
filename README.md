@@ -3,7 +3,6 @@
 
 <div align="center">
 
-[INSERT YOUR LOGO IMAGE HERE (IF APPLICABLE)]
 <!-- ☝️ Replace with your logo (if applicable) via ![](https://uri-to-your-logo-image) ☝️ -->
 <!-- ☝️ If you see logo rendering errors, make sure you're not using indentation, or try an HTML IMG tag -->
 
@@ -16,12 +15,6 @@
 <!-- ☝️ Replace with a single sentence describing the purpose of your repo / proj ☝️ -->
 
 <!-- Header block for project -->
-
-[INSERT YOUR BADGES HERE (SEE: https://shields.io)] [![SLIM](https://img.shields.io/badge/Best%20Practices%20from-SLIM-blue)](https://nasa-ammos.github.io/slim/)
-<!-- ☝️ Add badges via: https://shields.io e.g. ![](https://img.shields.io/github/your_chosen_action/your_org/your_repo) ☝️ -->
-
-[INSERT SCREENSHOT OF YOUR SOFTWARE, IF APPLICABLE]
-<!-- ☝️ Screenshot of your software (if applicable) via ![](https://uri-to-your-screenshot) ☝️ -->
 
 Tools for extracting metrics out of captured runtime performance of jobs from HySDS metrics in Elasticsearch/OpenSearch. These reports can be used by ops and can also be used as input to other cost-production models for anlaysis.
 <!-- ☝️ Replace with a more detailed description of your repository, including why it was made and whom its intended for.  ☝️ -->
