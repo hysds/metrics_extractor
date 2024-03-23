@@ -14,6 +14,8 @@
 #   2024-03-12: Created. Queries Metrics ES using aggregrations query API for each job type, then for each of its instance types, then metrics. Exports out to csv.
 #   2024-03-15: added extraction of hostname from ES url and duration unit days to improve output naming scheme.
 #   2024-03-18: clean up code. added documentation. added args options for --verbose and --debug to vary logger levels.
+#   2024-03-21: refactored to decouple job metrics csv export from extraction calls to ES. added functions get_job_metrics_aggregration(session, es_url, dt_start, dt_end) and export_job_metrics_to_csv(job_metrics, csv_filepath).
+#   2024-03-22: added export of second csv of job names by count. added functions get_counts_by_job_name(job_metrics) and export_job_counts_to_csv(counts_by_job_name, csv_filepath).
 # ----------------------------------------------------------------
 
 
@@ -678,6 +680,214 @@ def get_stage_out_rate(session, api_url, time_start, time_end, job_type, instanc
 # end def
 
 
+def get_job_metrics_aggregration(session, es_url, dt_start, dt_end):
+    '''
+    Gets the aggregrations of job metrics by job_type and instance_type.
+    For each job type, for each instance type, get metrics.
+    @param session: the reusbale request session
+    @param es_url: the api end point to elasticsearch.
+    @param dt_start: the start time constraint for ES query.
+    @param dt_end: the end time constraint for ES query.
+    @return: dict of job_metrics[job_type][instance_type] = (job_runtime_m, container_runtime_m, stage_in_size_gb, stage_out_size_gb, stage_in_rate_MBps, stage_out_rate_MBps, daily_count_mean, count, duration_days)
+    '''
+
+    # ES expects datetime in format "2024-03-12T22:32:26.383Z"
+    time_start = dt_start.strftime(timestamp_format_z)
+    time_end = dt_end.strftime(timestamp_format_z)
+
+    # job_metrics[job_type][instance_type] = (job_runtime_m, container_runtime_m, stage_in_size_gb, stage_out_size_gb, stage_in_rate_MBps, stage_out_rate_MBps, daily_count_mean, count, duration_days)
+    job_metrics = dict()
+
+    # for each job type
+    job_type_counts = get_job_types(session, es_url, time_start, time_end)
+    for (job_type,job_type_count) in sorted(job_type_counts):
+        logging.info(f'job_type: {job_type} --------------------')
+
+        try:
+            metrics_job_type = job_metrics[job_type]
+        except KeyError as e:
+            metrics_job_type = dict()
+            job_metrics[job_type] = metrics_job_type
+        # end try-except
+
+        # for each instance type
+        instance_type_counts = get_instance_types_by_job_type(session, es_url, time_start, time_end, job_type)
+        for (instance_type,instance_type_count) in sorted(instance_type_counts):
+            logging.info(f'    instance_type: {instance_type}')
+
+            (count_relation, count, job_runtime) = get_job_runtime(session, es_url, time_start, time_end, job_type, instance_type)
+            try:
+                # convert to minutes
+                job_runtime_m = float(job_runtime / 60)
+                logging.info(f'    job_runtime: {job_runtime_m} minutes')
+            except TypeError as e:
+                job_runtime_m = ''
+            # end try-except
+            try:
+                daily_count_mean = float( count / duration_days )
+                logging.info(f'    count: {count_relation} {count} , {daily_count_mean} avg per day')
+            except TypeError as e:
+                daily_count_mean = ''
+            # end try-except
+
+            (count_relation, count, container_runtime) = get_container_runtime(session, es_url, time_start, time_end, job_type, instance_type)
+            try:
+                # convert nanoseconds to minutes
+                container_runtime_m = float(container_runtime / 1000000000 / 60)
+                logging.info(f'    container_runtime: {container_runtime_m} minutes')
+            except TypeError as e:
+                container_runtime_m = ''
+            # end try-except
+            try:
+                daily_count_mean = float( count / duration_days )
+                logging.info(f'    count: {count_relation} {count} , {daily_count_mean} avg per day')
+            except TypeError as e:
+                daily_count_mean = ''
+            # end try-except
+
+            (count_relation, count, stage_in_size_bytes) = get_stage_in_size(session, es_url, time_start, time_end, job_type, instance_type)
+            try:
+                # convert bytes to GB
+                stage_in_size_gb = float(stage_in_size_bytes) / 1073741824
+                logging.info(f'    stage_in_size: {stage_in_size_gb} GB')
+            except TypeError as e:
+                stage_in_size_gb = ''
+            # end try-except
+
+            (count_relation, count, stage_in_rate_bps) = get_stage_in_rate(session, es_url, time_start, time_end, job_type, instance_type)
+            try:
+                # convert bytes to MB
+                stage_in_rate_MBps = float(stage_in_rate_bps) / 1048576
+                logging.info(f'    stage_in_rate: {stage_in_rate_MBps} MB/s')
+            except TypeError as e:
+                stage_in_rate_MBps = ''
+            # end try-except
+
+            (count_relation, count, stage_out_size_bytes) = get_stage_out_size(session, es_url, time_start, time_end, job_type, instance_type)
+            try:
+                # convert bytes to GB
+                stage_out_size_gb = float(stage_out_size_bytes) / 1073741824
+                logging.info(f'    stage_out_size: {stage_out_size_gb} GB')
+            except TypeError as e:
+                stage_out_size_gb = ''
+            # end try-except
+
+            (count_relation, count, stage_out_rate_bps) = get_stage_out_rate(session, es_url, time_start, time_end, job_type, instance_type)
+            try:
+                # convert bytes to MB
+                stage_out_rate_MBps = float(stage_out_rate_bps) / 1048576
+                logging.info(f'    stage_out_rate: {stage_out_rate_MBps} MB/s')
+            except TypeError as e:
+                stage_out_rate_MBps = ''
+            # end try-except
+
+            metrics_job_type[instance_type] = (job_runtime_m, container_runtime_m, stage_in_size_gb, stage_out_size_gb, stage_in_rate_MBps, stage_out_rate_MBps, daily_count_mean, count, duration_days)
+        # end for
+    # end for
+
+    return job_metrics
+# end def
+
+
+def export_job_metrics_to_csv(job_metrics, csv_filepath):
+    '''
+    Exports to csv file the given aggregrations of job metrics by job_type and instance_type.
+    @param job_metrics: the dict of job metrics returned by get_job_metrics_aggregration()
+    @param csv_filepath: the file path to the output csv.
+    '''
+
+    import csv
+    with open(csv_filepath, mode='w') as csv_out:
+        logging.debug(f'writing to {csv_filepath}...')
+        csv_writer = csv.writer(csv_out, delimiter=',', quotechar='"', quoting=csv.QUOTE_NONNUMERIC)
+        csv_writer.writerow(['job type', 'job runtime (minutes avg)', 'container runtime (minutes avg)', 'stage-in size (GB avg)', 'stage-out size (GB avg)', 'instance type', 'stage-in rate (MB/s avg)', 'stage-out rate (MB/s avg)', 'daily count avg', 'count over duration', 'duration days'])
+
+        for job_type in sorted(job_metrics.keys()):
+            metrics_job_type = job_metrics[job_type]
+
+            for instance_type in sorted(metrics_job_type.keys()):
+                (job_runtime_m, container_runtime_m, stage_in_size_gb, stage_out_size_gb, stage_in_rate_MBps, stage_out_rate_MBps, daily_count_mean, count, duration_days) = metrics_job_type[instance_type]
+                logging.debug(f'  {job_type} - {instance_type} : {job_runtime_m}, {container_runtime_m}, {stage_in_size_gb}, {stage_out_size_gb}, {instance_type}, {stage_in_rate_MBps}, {stage_out_rate_MBps}, {daily_count_mean}, {count}, {duration_days}')
+                csv_writer.writerow([job_type, job_runtime_m, container_runtime_m, stage_in_size_gb, stage_out_size_gb, instance_type, stage_in_rate_MBps, stage_out_rate_MBps, daily_count_mean, count, duration_days])
+            # end for
+
+        # end for
+    # end with open csv
+    logging.info(f'...exported metrics to {csv_filepath}')
+# end def
+
+
+def get_counts_by_job_name(job_metrics):
+    '''
+    Gets job names (no version) and counts that merges each job_type's versions and instance_types together.
+    @param job_metrics: the dict of job metrics returned by get_job_metrics_aggregration()
+    @return: dict of counts_by_job_name[job_type_name] = (count_avg, count_total, duration_days) for each canonical job--regardless of its versions and instance types.
+    '''
+
+    counts_by_job_name = dict()
+    duration_days = None # same for all job metric here
+
+    for job_type in sorted(job_metrics.keys()): 
+        # job_type has foramt "job-SCIFLO_L0B_KCAL_Frame:release-v5.1.0-beta.0"
+        # split into job_type name and version
+        job_type_tokens = job_type.split(':')
+        logging.debug(f'job_type_tokens:  {job_type_tokens}')
+        job_type_name    = job_type_tokens[0]
+        job_type_version = job_type_tokens[1]
+ 
+        try:
+            counts = counts_by_job_name[job_type_name]
+        except KeyError as e:
+            # initialize
+            counts = list()
+            counts_by_job_name[job_type_name] = counts
+        # end try-except
+
+        metrics_job_type = job_metrics[job_type]
+        for instance_type in sorted(metrics_job_type.keys()):
+            (job_runtime_m, container_runtime_m, stage_in_size_gb, stage_out_size_gb, stage_in_rate_MBps, stage_out_rate_MBps, daily_count_mean, count, duration_days) = metrics_job_type[instance_type]
+            logging.debug(f'  {job_type_name} - {job_type_version} - {instance_type} : {count} jobs over {duration_days} days')
+            counts.append(count)
+        # end for
+    # end for
+
+    # get average counts over duration for each job's counts
+    for job_type_name in sorted(counts_by_job_name.keys()):
+        counts = counts_by_job_name[job_type_name]
+        count_total = sum(counts)
+        count_avg = count_total / duration_days
+        logging.debug(f'  {job_type_name} has counts {counts} over {duration_days} days. total {count_total} and average {count_avg}')
+
+        # update item with tuple
+        counts_by_job_name[job_type_name] = (count_avg, count_total, duration_days)
+    # end for
+
+    return counts_by_job_name
+# end def
+
+
+def export_job_counts_to_csv(counts_by_job_name, csv_filepath):
+    '''
+    Exports to csv file the given job name counts.
+    @param counts_by_job_name: the dict of counts_by_job_name[job_type_name] = (count_avg, count_total, duration_days)
+    @param csv_filepath: the file path to the output csv.
+    '''
+    import csv
+    with open(csv_filepath, mode='w') as csv_out:
+        logging.debug(f'writing to {csv_filepath}...')
+        csv_writer = csv.writer(csv_out, delimiter=',', quotechar='"', quoting=csv.QUOTE_NONNUMERIC)
+        csv_writer.writerow(['job name', 'daily count avg', 'count over duration', 'duration days'])
+
+        for job_type_name in sorted(counts_by_job_name.keys()):
+            (count_avg, count_total, duration_days) = counts_by_job_name[job_type_name]
+            logging.debug(f'  {job_type_name}: count_avg={count_avg} , count_total={count_total} , duration_days={duration_days}')
+            csv_writer.writerow([job_type_name, count_avg, count_total, duration_days])
+        # end for
+    # end with open csv
+    logging.info(f'...exported metrics to {csv_filepath}')
+# end def
+
+
 if __name__ == "__main__":
 
     # ----------------------------------------------------------------
@@ -796,6 +1006,8 @@ if __name__ == "__main__":
     duration_days = dt_duration.days + (dt_duration.seconds / (60*60*24) )
     logging.info(f'duration_days: {duration_days}')
 
+    duration_days_str = '{:.1f}'.format(duration_days)
+
     # ----------------------------------------------------------------
 
     logging.info(f'HySDS Metrics ES url: {es_url}')
@@ -826,104 +1038,25 @@ if __name__ == "__main__":
     session.auth = (username, password)
 
     # ----------------------------------------------------------------
-    # for each job type, for each instance type, get metrics
+    # get the job metrics from ES
 
-    duration_days_str = '{:.1f}'.format(duration_days)
-    csv_filename = f'job_metrics {hostname} {dt_start.strftime(timestamp_format_t)}-{dt_end.strftime(timestamp_format_t)} spanning {duration_days_str} days.csv'
+    # for each job type, for each instance type, get metrics.
+    # job_metrics[job_type][instance_type] = (job_runtime_m, container_runtime_m, stage_in_size_gb, stage_out_size_gb, stage_in_rate_MBps, stage_out_rate_MBps, daily_count_mean, count, duration_days)
+    job_metrics = get_job_metrics_aggregration(session, es_url, dt_start, dt_end)
 
-    # ES expects datetime in format "2024-03-12T22:32:26.383Z"
-    time_start = dt_start.strftime(timestamp_format_z)
-    time_end = dt_end.strftime(timestamp_format_z)
+    # export job metrics to csv
+    csv_filepath = f'job_aggregrates_by_version_instance_type {hostname} {dt_start.strftime(timestamp_format_t)}-{dt_end.strftime(timestamp_format_t)} spanning {duration_days_str} days.csv'
+    export_job_metrics_to_csv(job_metrics, csv_filepath)
 
-    import csv
-    with open(csv_filename, mode='w') as csv_out:
-        csv_writer = csv.writer(csv_out, delimiter=',', quotechar='"', quoting=csv.QUOTE_NONNUMERIC)
-        csv_writer.writerow(['job_type', 'job runtime (minutes avg)', 'container runtime (minutes avg)', 'stage-in size (GB avg)', 'stage-out size (GB avg)', 'instance type', 'stage-in rate (MB/s avg)', 'stage-out rate (MB/s avg)', 'daily count avg', 'count over duration', 'duration days'])
+    # ----------------------------------------------------------------
+    # get the counts_by_job_name[job_type_name] = (count_avg, count_total, duration_days)
 
-        # for each job type
-        job_type_counts = get_job_types(session, es_url, time_start, time_end)
-        for (job_type,job_type_count) in sorted(job_type_counts):
-            logging.info(f'job_type: {job_type} --------------------')
+    # get job names, merged versions and instance types.
+    counts_by_job_name = get_counts_by_job_name(job_metrics)
 
-            # for each instance type
-            instance_type_counts = get_instance_types_by_job_type(session, es_url, time_start, time_end, job_type)
-            for (instance_type,instance_type_count) in sorted(instance_type_counts):
-                logging.info(f'    instance_type: {instance_type}')
-
-                (count_relation, count, job_runtime) = get_job_runtime(session, es_url, time_start, time_end, job_type, instance_type)
-                try:
-                    # convert to minutes
-                    job_runtime_m = float(job_runtime / 60)
-                    logging.info(f'    job_runtime: {job_runtime_m} minutes')
-                except TypeError as e:
-                    job_runtime_m = 'n/a'
-                # end try-except
-                try:
-                    daily_count_mean = float( count / duration_days )
-                    logging.info(f'    count: {count_relation} {count} , {daily_count_mean} avg per day')
-                except TypeError as e:
-                    daily_count_mean = 'n/a'
-                # end try-except
-
-                (count_relation, count, container_runtime) = get_container_runtime(session, es_url, time_start, time_end, job_type, instance_type)
-                try:
-                    # convert nanoseconds to minutes
-                    container_runtime_m = float(container_runtime / 1000000000 / 60)
-                    logging.info(f'    container_runtime: {container_runtime_m} minutes')
-                except TypeError as e:
-                    container_runtime_m = 'n/a'
-                # end try-except
-                try:
-                    daily_count_mean = float( count / duration_days )
-                    logging.info(f'    count: {count_relation} {count} , {daily_count_mean} avg per day')
-                except TypeError as e:
-                    daily_count_mean = 'n/a'
-                # end try-except
-
-                (count_relation, count, stage_in_size_bytes) = get_stage_in_size(session, es_url, time_start, time_end, job_type, instance_type)
-                try:
-                    # convert bytes to GB
-                    stage_in_size_gb = float(stage_in_size_bytes) / 1073741824
-                    logging.info(f'    stage_in_size: {stage_in_size_gb} GB')
-                except TypeError as e:
-                    stage_in_size_gb = 'n/a'
-                # end try-except
-
-                (count_relation, count, stage_in_rate_bps) = get_stage_in_rate(session, es_url, time_start, time_end, job_type, instance_type)
-                try:
-                    # convert bytes to MB
-                    stage_in_rate_MBps = float(stage_in_rate_bps) / 1048576
-                    logging.info(f'    stage_in_rate: {stage_in_rate_MBps} MB/s')
-                except TypeError as e:
-                    stage_in_rate_MBps = 'n/a'
-                # end try-except
-
-                (count_relation, count, stage_out_size_bytes) = get_stage_out_size(session, es_url, time_start, time_end, job_type, instance_type)
-                try:
-                    # convert bytes to GB
-                    stage_out_size_gb = float(stage_out_size_bytes) / 1073741824
-                    logging.info(f'    stage_out_size: {stage_out_size_gb} GB')
-                except TypeError as e:
-                    stage_out_size_gb = 'n/a'
-                # end try-except
-
-                (count_relation, count, stage_out_rate_bps) = get_stage_out_rate(session, es_url, time_start, time_end, job_type, instance_type)
-                try:
-                    # convert bytes to MB
-                    stage_out_rate_MBps = float(stage_out_rate_bps) / 1048576
-                    logging.info(f'    stage_out_rate: {stage_out_rate_MBps} MB/s')
-                except TypeError as e:
-                    stage_out_rate_MBps = 'n/a'
-                # end try-except
-
-                csv_writer.writerow([job_type, job_runtime_m, container_runtime_m, stage_in_size_gb, stage_out_size_gb, instance_type, stage_in_rate_MBps, stage_out_rate_MBps, daily_count_mean, count, duration_days])
-
-            # end for
-        # end for
-    # end with open csv
-
-    logging.info(f'...exported metrics to {csv_filename}')
-
+    # export job metrics to csv
+    csv_filepath = f'job_counts_by_name {hostname} {dt_start.strftime(timestamp_format_t)}-{dt_end.strftime(timestamp_format_t)} spanning {duration_days_str} days.csv'
+    export_job_counts_to_csv(counts_by_job_name, csv_filepath)
 
 # end if main
 
