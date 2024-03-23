@@ -29,7 +29,8 @@ Metrics extractions are important to get actuals from production, which can then
 * Extracts actual runtime metrics from a [HySDS](https://github.com/hysds/) venue.
 * Extracts all metrics enumerations of each job type and its set of compute instance types.
 * Leverages ES' built-in aggregrations API to compute statistics on the ES server side.
-* Exports agreggration job metrics to CSV
+* Exports to CSV the job metric agreggration by version and instance type
+* Exports to CSV the job metric name total counts that merges versions and instance types
 
 <!-- ☝️ Replace with a bullet-point list of your features ☝️ -->
 
@@ -100,11 +101,13 @@ Quick start examples:
 
 ### Example outputs
 
-hysds_metrics_es_extractor.py will produce an output csv report of job metrics.
+hysds_metrics_es_extractor.py will produce two output csv report of job metrics.
+
+#### (output 1) csv of job_aggregrates_by_version_instance_type
 
 The file name is composed of the following tokens:
 
-    "job_metrics {hostname} {start}-{end} spanning {duration_days} days.csv".
+    "job_aggregrates_by_version_instance_type {hostname} {start}-{end} spanning {duration_days} days.csv".
 
 The results of querying ES for logstash aggregrates will be exported out for the following fields:
 
@@ -121,6 +124,23 @@ The results of querying ES for logstash aggregrates will be exported out for the
 * __duration days__: the sampled duration to query ES of job metrics.
 
 This collapses the aggregrates to all enumerations of job_type-to-instance_type pairings.
+
+Note that the aggregates are constrained to only samples with successful jobs (exit code 0) and ignores failed jobs so as to not skew the timing results.
+
+#### (output 2) csv of job_counts_by_name
+
+The file name is composed of the following tokens:
+
+    "job_counts_by_name {hostname} {start}-{end} spanning {duration_days} days.csv".
+
+The results of querying ES for logstash aggregrates will be exported out for the following fields:
+
+* __job_name__: the algorhtm name (without version)
+* __daily count avg__: the mean count of successful jobs sampled over the given duration.
+* __count over duration__: the total count of successful jobs sampled over the given duration.
+* __duration days__: the sampled duration to query ES of job metrics.
+
+This collapses the aggregrates to all enumerations of job name across all of its verisons and instance types.
 
 Note that the aggregates are constrained to only samples with successful jobs (exit code 0) and ignores failed jobs so as to not skew the timing results.
 
