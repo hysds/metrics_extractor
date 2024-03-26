@@ -105,6 +105,10 @@ hysds_metrics_es_extractor.py will produce two output csv report of job metrics.
 
 #### (output 1) csv of job_aggregrates_by_version_instance_type
 
+Example CSV output of that aggregrates all job enumerations for each job_type-to-instance_type pairings:
+
+![Example CSV output of job_aggregrates_by_version_instance_type](assets/example-job_aggregrates_by_version_instance_type.png?raw=true "Example CSV output of job_aggregrates_by_version_instance_type")
+
 The file name is composed of the following tokens:
 
     "job_aggregrates_by_version_instance_type {hostname} {start}-{end} spanning {duration_days} days.csv".
@@ -123,11 +127,13 @@ The results of querying ES for logstash aggregrates will be exported out for the
 * __count over duration__: the total count of successful jobs sampled over the given duration.
 * __duration days__: the sampled duration to query ES of job metrics.
 
-This collapses the aggregrates to all enumerations of job_type-to-instance_type pairings.
-
 Note that the aggregates are constrained to only samples with successful jobs (exit code 0) and ignores failed jobs so as to not skew the timing results.
 
 #### (output 2) csv of job_counts_by_name
+
+Example CSV output of job_counts_by_name that collapses each job name aggregrate's enumerations across all of its verisons and instance types:
+
+![Example CSV output of job_counts_by_name](assets/example-job_counts_by_name.png?raw=true "Example CSV output of job_counts_by_name")
 
 The file name is composed of the following tokens:
 
@@ -139,8 +145,6 @@ The results of querying ES for logstash aggregrates will be exported out for the
 * __daily count avg__: the mean count of successful jobs sampled over the given duration.
 * __count over duration__: the total count of successful jobs sampled over the given duration.
 * __duration days__: the sampled duration to query ES of job metrics.
-
-This collapses the aggregrates to all enumerations of job name across all of its verisons and instance types.
 
 Note that the aggregates are constrained to only samples with successful jobs (exit code 0) and ignores failed jobs so as to not skew the timing results.
 
