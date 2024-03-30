@@ -83,7 +83,7 @@ The es_url typically has the form:
 The temporal range can be provided in one of two ways:
 
 * __--days_back__=NN , where NN is the number of days back to search starting from "now".
-* __--time_start__=20240101T000000Z --time_end=20240313T000000Z , where the timestamps extents are in UTC format with the trailing "Z".
+* __--time_start__=20240101T000000Z __--time_end__=20240313T000000Z , where the timestamps extents are in UTC format with the trailing "Z".
 
 Verbosity options:
 
@@ -101,7 +101,7 @@ Quick start examples:
 
 ### Example outputs
 
-hysds_metrics_es_extractor.py will produce two output csv report of job metrics.
+hysds_metrics_es_extractor.py will produce two output csv reports of job metrics. One shows aggregrates for each job-type-version-instance tuple, and a second that merged the version and instance types to give a higher level aggregrate summary per canonical job. 
 
 #### (output 1) csv of job_aggregrates_by_version_instance_type
 
