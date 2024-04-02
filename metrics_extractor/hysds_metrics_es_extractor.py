@@ -22,16 +22,22 @@
 #                   -export_job_metrics_to_csv : Adjusted for the change that was made to the "job_metrics" data strucutre
 #                   -get_counts_by_job_name : Simplified the function to be faster & simpler. Also added a parameter for desired rounding. Changed the count_by_job_name to use a dictionary instead of a tuple for aggregate information
 #                   -export_job_counts_to_csv : Adjusted for the change that was made in "get_counts_by_job_name"
-#               
-#               
+#
+#   2024-04-02: 
+#               - Transitioned Job Metrics storage from dictionary to pandas DataFrame for enhanced data manipulation and analysis.
+#               - Revised the creation process for Job Counts by Metrics to leverage pandas capabilities, improving efficiency and readability.
+#               - Replaced CSV export functionality with pandas and openpyxl integration, enabling more flexible and powerful data export options.
+#               - Added a Dynamic Workbook naming depending on whether "days_back" or "time_start/end" were provided
+#
+#
 # ----------------------------------------------------------------
 from argparse import ArgumentParser
-from collections import defaultdict
-import csv
 from datetime import datetime, timedelta, timezone
 import getpass
 import json
 import logging
+import openpyxl
+import pandas as pd
 import requests
 import sys
 from urllib.parse import urlsplit
@@ -136,7 +142,6 @@ def _get_es_aggregations_buckets_keys(session, api_url, query):
 
     logging.debug(f"keys_counts: {keys_counts}")
     return keys_counts
-# end def
 
 
 def _get_es_aggregations_value(session, api_url, query):
@@ -212,7 +217,6 @@ def _get_es_aggregations_value(session, api_url, query):
         f"hits_total_relation: {hits_total_relation}, hits_total_value: {hits_total_value}, value: {value}"
     )
     return (hits_total_relation, hits_total_value, value)
-# end def
 
 
 def _get_es_aggs_avg_field(
@@ -318,7 +322,6 @@ def _get_es_aggs_avg_field(
         f"hits_total_relation: {hits_total_relation}, hits_total_value: {hits_total_value}, avg_value: {avg_value}"
     )
     return (hits_total_relation, hits_total_value, avg_value)
-# end def
 
 
 def get_job_types(session, api_url, time_start, time_end):
@@ -413,7 +416,6 @@ def get_job_types(session, api_url, time_start, time_end):
 
     logging.debug(f"keys_counts: {keys_counts}")
     return keys_counts
-# end def
 
 
 def get_instance_types_by_job_type(session, api_url, time_start, time_end, job_type):
@@ -510,7 +512,6 @@ def get_instance_types_by_job_type(session, api_url, time_start, time_end, job_t
 
     logging.debug(f"keys_counts: {keys_counts}")
     return keys_counts
-# end def
 
 
 def get_job_runtime(session, api_url, time_start, time_end, job_type, instance_type):
@@ -531,7 +532,6 @@ def get_job_runtime(session, api_url, time_start, time_end, job_type, instance_t
         session, api_url, time_start, time_end, job_type, exit_code, instance_type, field
     )
     return (hits_total_relation, hits_total_value, avg_value)
-# end def
 
 
 def get_container_runtime(
@@ -555,7 +555,6 @@ def get_container_runtime(
         session, api_url, time_start, time_end, job_type, exit_code, instance_type, field
     )
     return (hits_total_relation, hits_total_value, avg_value)
-# end def
 
 
 def get_stage_in_size(session, api_url, time_start, time_end, job_type, instance_type):
@@ -576,7 +575,6 @@ def get_stage_in_size(session, api_url, time_start, time_end, job_type, instance
         session, api_url, time_start, time_end, job_type, exit_code, instance_type, field
     )
     return (hits_total_relation, hits_total_value, avg_value)
-# end def
 
 
 def get_stage_in_rate(session, api_url, time_start, time_end, job_type, instance_type):
@@ -597,7 +595,6 @@ def get_stage_in_rate(session, api_url, time_start, time_end, job_type, instance
         session, api_url, time_start, time_end, job_type, exit_code, instance_type, field
     )
     return (hits_total_relation, hits_total_value, avg_value)
-# end def
 
 
 def get_stage_out_size(session, api_url, time_start, time_end, job_type, instance_type):
@@ -619,7 +616,6 @@ def get_stage_out_size(session, api_url, time_start, time_end, job_type, instanc
         session, api_url, time_start, time_end, job_type, exit_code, instance_type, field
     )
     return (hits_total_relation, hits_total_value, avg_value)
-# end def
 
 
 def get_stage_out_rate(session, api_url, time_start, time_end, job_type, instance_type):
@@ -641,7 +637,6 @@ def get_stage_out_rate(session, api_url, time_start, time_end, job_type, instanc
         session, api_url, time_start, time_end, job_type, exit_code, instance_type, field
     )
     return (hits_total_relation, hits_total_value, avg_value)
-# end def
 
 
 def get_job_metrics_aggregration(
@@ -783,147 +778,136 @@ def get_job_metrics_aggregration(
         # end for
     # end for
     return job_metrics
-# end def
 
 
-def export_job_metrics_to_csv(job_metrics, csv_filepath):
+def flatten_job_metrics_to_dataframe(job_metrics):
     """
-    Exports to csv file the given aggregrations of job metrics by job_type and instance_type.
-    @param job_metrics: the dict of job metrics returned by get_job_metrics_aggregration()
-    @param csv_filepath: the file path to the output csv.
+    Flattens the nested job metrics dictionary into a pandas DataFrame. Each row in the resulting DataFrame represents a unique combination of a job type and an EC2 instance,
+    including all associated metrics.
+
+    @param job_metrics: dict, Nested dictionary of job metrics.
+    @return: DataFrame, A pandas DataFrame where each row corresponds to a unique job-type-EC2 instance
+             combination, with columns for each metric.
     """
-    import csv
+    data = []
 
-    with open(csv_filepath, mode="w") as csv_out:
-        logging.debug(f"writing to {csv_filepath}...")
-        csv_writer = csv.writer(
-            csv_out, delimiter=",", quotechar='"', quoting=csv.QUOTE_NONNUMERIC
-        )
-        csv_writer.writerow(
-            [
-                "job type",
-                "job runtime (minutes avg)",
-                "container runtime (minutes avg)",
-                "stage-in size (GB avg)",
-                "stage-out size (GB avg)",
-                "instance type",
-                "stage-in rate (MB/s avg)",
-                "stage-out rate (MB/s avg)",
-                "daily count avg",
-                "count over duration",
-                "duration days",
-            ]
-        )
+    # Iterate over the nested dictionary to flatten it into a list of dictionaries
+    for job_type, instances in job_metrics.items():
+        for instance_type, metrics in instances.items():
+            row = {"JobType": job_type, "InstanceType": instance_type}
 
-        for job_type in sorted(job_metrics.keys()):
-            metrics_job_type = job_metrics[job_type]
-            for instance_type in sorted(metrics_job_type.keys()):
-                # Grab all of the metrics we've stored
-                job_runtime_m = metrics_job_type[instance_type]["job_runtime_m"]
-                container_runtime_m = metrics_job_type[instance_type][
-                    "container_runtime_m"
-                ]
-                stage_in_size_gb = metrics_job_type[instance_type]["stage_in_size_gb"]
-                stage_out_size_gb = metrics_job_type[instance_type]["stage_out_size_gb"]
-                stage_in_rate_MBps = metrics_job_type[instance_type]["stage_in_rate_MBps"]
-                stage_out_rate_MBps = metrics_job_type[instance_type][
-                    "stage_out_rate_MBps"
-                ]
-                daily_count_mean = metrics_job_type[instance_type]["daily_count_mean"]
-                count = metrics_job_type[instance_type]["count"]
-                duration_days = metrics_job_type[instance_type]["duration_days"]
+            row.update(metrics)
+            data.append(row)
 
-                logging.debug(
-                    f"  {job_type} - {instance_type} : {job_runtime_m}, {container_runtime_m}, {stage_in_size_gb}, {stage_out_size_gb}, {instance_type}, {stage_in_rate_MBps}, {stage_out_rate_MBps}, {daily_count_mean}, {count}, {duration_days}"
-                )
-                csv_writer.writerow(
-                    [
-                        job_type,
-                        job_runtime_m,
-                        container_runtime_m,
-                        stage_in_size_gb,
-                        stage_out_size_gb,
-                        instance_type,
-                        stage_in_rate_MBps,
-                        stage_out_rate_MBps,
-                        daily_count_mean,
-                        count,
-                        duration_days,
-                    ]
-                )
-            # end for
+    # Convert the list of dictionaries into a DataFrame
+    df = pd.DataFrame(data)
 
-        # end for
-    # end with open csv
-    logging.info(f"...exported metrics to {csv_filepath}")
-# end def
+    return df
 
 
-def get_counts_by_job_name(job_metrics, duration_days, desired_rounding):
+def aggregate_job_metrics_by_count(df_job_metrics):
     """
-    Gets job names (no version) and counts that merges each job_type's versions and instance_types together.
-    @param job_metrics: the dict of job metrics returned by get_job_metrics_aggregration()
-    @param duration_days: Number of days over which counts are aggregated.
-    @param desired_rounding: The desired amount of significant digits after the decimal point for collected metrics
+    Aggregates and recalculates the Metrics for JobTypes across different instances. Modifies Job Types to exclude version/release information, sums total counts,
+    and averages daily counts without weighting, assuming consistent duration across all counts.
 
-    @return: Dictionary with job type names as keys and another dictionary with total counts and average counts as values.
+    @param df_job_metrics (pd.DataFrame): DataFrame with columns including JobType, daily_count_mean, count, duration_days, and potentially others.
+    @return (pd.DataFrame): DataFrame with aggregated metrics per JobType, with columns for JobType, recalculated daily count mean, total count, and duration days.
     """
 
-    counts_by_job_name = defaultdict(list)  # Holds counts for each job type name.
+    temp_df = df_job_metrics.copy()
+    temp_df["JobType"] = temp_df["JobType"].str.split(":").str[0]
 
-    for job_type, metrics in job_metrics.items():
-        job_type_name, job_type_version = job_type.split(":")  # Split for logging.
-        logging.debug(f"job_type_tokens:  {job_type_name}, {job_type_version}")
+    # Aggregate metrics
+    aggregated_df = temp_df.groupby("JobType", as_index=False).agg(
+        recalculated_daily_count_mean=pd.NamedAgg(
+            column="daily_count_mean", aggfunc="mean"
+        ),
+        total_count=pd.NamedAgg(column="count", aggfunc="sum"),
+        total_duration_days=pd.NamedAgg(
+            column="duration_days", aggfunc="mean"
+        ),  # Assuming consistent duration
+    )
 
-        for instance_type, instance_metrics in metrics.items():
-            counts_by_job_name[job_type_name].append(instance_metrics["count"])
-            logging.debug(
-                f"  {job_type_name} - {job_type_version} - {instance_type} : {instance_metrics['count']} jobs over {duration_days} days"
-            )
+    spreadshet_column_order_for_counts = [
+        "JobType",
+        "recalculated_daily_count_mean",
+        "total_count",
+        "total_duration_days",
+    ]
+    aggregated_df = aggregated_df[spreadshet_column_order_for_counts]
 
-    final_counts = {}  # Final output dictionary.
-    for job_type_name, counts in counts_by_job_name.items():
-        count_total = sum(counts)  # Total counts for this job type.
-        count_avg = round(count_total / duration_days, desired_rounding)  # Average count.
-        # Store total and average count separately in a nested dictionary.
-        final_counts[job_type_name] = {
-            "count_total": count_total,
-            "count_avg": count_avg,
-            "duration_days": duration_days,
-        }
-        logging.debug(
-            f"  {job_type_name}: Total {count_total}, Average {count_avg} over {duration_days} days."
-        )
+    return aggregated_df
 
-    return final_counts
 
-def export_job_counts_to_csv(counts_by_job_name, csv_filepath):
+def auto_size_columns(sheet, width_buffer):
     """
-    Exports to csv file the given job name counts.
-    @param counts_by_job_name: the dict of counts_by_job_name[job_type_name] = (count_avg, count_total, duration_days)
-    @param csv_filepath: the file path to the output csv.
-    """
-    with open(csv_filepath, mode="w") as csv_out:
-        logging.debug(f"writing to {csv_filepath}...")
-        csv_writer = csv.writer(
-            csv_out, delimiter=",", quotechar='"', quoting=csv.QUOTE_NONNUMERIC
-        )
-        csv_writer.writerow(
-            ["job name", "daily count avg", "count over duration", "duration days"]
-        )
-        for job_type_name in sorted(counts_by_job_name.keys()):
-            count_avg = counts_by_job_name[job_type_name]["count_avg"]
-            count_total = counts_by_job_name[job_type_name]["count_total"]
-            duration_days = counts_by_job_name[job_type_name]["duration_days"]
+    Automatically adjusts the width of all columns in the specified sheet based on the widest value in each column. Adds a small buffer for aesthetics.
 
-            logging.debug(
-                f"  {job_type_name}: count_avg={count_avg} , count_total={count_total} , duration_days={duration_days}"
-            )
-            csv_writer.writerow([job_type_name, count_avg, count_total, duration_days])
-        # end for
-    # end with open csv
-    logging.info(f"...exported metrics to {csv_filepath}")
-# end def
+    @param sheet (openpyxl.worksheet.worksheet.Worksheet): The sheet to autosize columns for.
+    @param width_buffer (float): The multiplication buffer wanted to increase the width of the autosized columns
+    """
+
+    for column_cells in sheet.columns:
+        max_length = 0
+        for cell in column_cells:
+            try:
+                cell_length = len(str(cell.value))
+                max_length = max(max_length, cell_length)
+            except TypeError:
+                pass  # Handles NoneType or similar issues
+
+        # Apply a buffer and set column width
+        adjusted_width = (
+            max_length + 2
+        ) * width_buffer  # Adjust the multiplier as needed
+        column_letter = openpyxl.utils.get_column_letter(column_cells[0].column)
+        sheet.column_dimensions[column_letter].width = adjusted_width
+
+
+def format_job_aggregate_metrics(sheet):
+    """
+    Perform the desired formatting changes for the Spreadsheet containing the Job Aggregate Metrics
+
+    @param sheet (openpyxl.worksheet.worksheet.Worksheet): The Job Aggregate Metrics Sheet
+    """
+    # Autosizing columns based on the widest value in each column
+    width_buffer = 1.1
+    auto_size_columns(sheet, width_buffer)
+
+
+def format_job_metrics_by_count(sheet):
+    """
+    Perform the desired formatting changes for the Spreadsheet containing the Job Aggregate Metrics
+
+    @param sheet (openpyxl.worksheet.worksheet.Worksheet): The Metrics by Job Count Sheet
+    """
+    width_buffer = 1.1
+    auto_size_columns(sheet, width_buffer)
+
+
+def write_dfs_to_excel(dfs, workbook_name):
+    """
+    Writes multiple DataFrames to an Excel workbook, each DataFrame to a separate sheet.
+    Applies custom formatting to each sheet.
+
+    @param dfs (dict): A dictionary where keys are sheet names and values are pandas DataFrames.
+    @param workbook_name (str): The file path of the Excel workbook to write.
+    """
+
+    with pd.ExcelWriter(workbook_name, engine="openpyxl") as writer:
+        for sheet_name, df in dfs.items():
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+            workbook = writer.book
+            sheet = workbook[sheet_name]
+
+            if sheet_name == "job_aggregate_metrics":
+                format_job_aggregate_metrics(sheet)
+
+            elif sheet_name == "job_metrics_by_count":
+                format_job_metrics_by_count(sheet)
+
+        # Note: The workbook is automatically saved when exiting the 'with' block.
+        # If you'd like to do more stuff to the workbook once all sheets are added, you can do so outside this function
 
 
 def parse_inputs(parser) -> dict:
@@ -1129,12 +1113,13 @@ def main():
     time_end = input_args["time_end"]
 
     # Will eventually want to define this better. Either with a better var-name or by being user-input
-    desired_rounding = 4  # Determine the amount of siginifcant digits our metrics will have
+    desired_rounding = (
+        4  # Determine how many significant figures after the decimal 
+    )
 
     # ----------------------------------------------------------------
     # determine start and end times.
-    # if days_back is given, use based from now.
-    # else look for start and end times given.
+    # if days_back is given, use based from now, else look for start and end times given.
 
     # ES expects datetime in format "2024-03-12T22:32:26.383Z"
     es_timestamp_fmt = "%Y-%m-%dT%H:%M:%S.%fZ"
@@ -1149,7 +1134,6 @@ def main():
     # ----------------------------------------------------------------
 
     logging.info(f"HySDS Metrics ES url: {es_url}")
-
     hostname = urlsplit(es_url).netloc
 
     # ----------------------------------------------------------------
@@ -1183,20 +1167,43 @@ def main():
         desired_rounding,
     )
 
-    # export job metrics to csv
-    csv_filepath = f"job_aggregrates_by_version_instance_type {hostname} {dt_start.strftime(iso8601_basic_fmt)}-{dt_end.strftime(iso8601_basic_fmt)} spanning {str(duration_days)} days.csv"
-    export_job_metrics_to_csv(job_metrics, csv_filepath)
+    # Create a Dataframe holding all of the Job Metrics information, making sure to only have rows with valid information in it
+    job_metrics_df = flatten_job_metrics_to_dataframe(job_metrics)
+    job_metrics_df = job_metrics_df[job_metrics_df["count"] != 0]
 
-    # ----------------------------------------------------------------
-    # get the counts_by_job_name[job_type_name] = (count_avg, count_total, duration_days)
-
-    counts_by_job_name = get_counts_by_job_name(
-        job_metrics, duration_days, desired_rounding
+    # Reorder the Dataframe Columns to appear in a specific order
+    new_order_of_metrics = [
+        "JobType",
+        "job_runtime_m",
+        "container_runtime_m",
+        "stage_in_size_gb",
+        "stage_out_size_gb",
+        "InstanceType",
+    ]
+    new_order_of_metrics.extend(
+        [col for col in job_metrics_df.columns if col not in new_order_of_metrics]
     )
 
-    # export job metrics to csv
-    csv_filepath = f"job_counts_by_name {hostname} {dt_start.strftime(iso8601_basic_fmt)}-{dt_end.strftime(iso8601_basic_fmt)} spanning {str(duration_days)} days.csv"
-    export_job_counts_to_csv(counts_by_job_name, csv_filepath)
+    job_metrics_df = job_metrics_df[new_order_of_metrics]
+
+    # Aggregate all Metrics by Job Count, stripping away the versioning from the Job Types
+    metrics_by_job_count_df = aggregate_job_metrics_by_count(job_metrics_df)
+
+    # Organize the Dataframes in a dictionary to keep track of them
+    dataframes = {
+        "job_aggregate_metrics": job_metrics_df,
+        "job_metrics_by_count": metrics_by_job_count_df,
+    }
+
+    # Save the Dataframes to an Excel Workbook
+    if days_back:
+        workbook_name = f"hysds_metrics_for_{hostname}_spanning_{str(int(duration_days))}_days_back_from_{dt_end.strftime(iso8601_basic_fmt)}.xlsx"
+    elif time_start and time_end: 
+        workbook_name = f"hysds_metrics_for_{hostname}_from_{dt_start.strftime(iso8601_basic_fmt)}_to_{dt_end.strftime(iso8601_basic_fmt)}.xlsx"
+
+    write_dfs_to_excel(dataframes, workbook_name)
+    logging.info(f"Finished Collecting Metrics...wrote out results to {workbook_name} to the current working directory")
+    print(f"Finished Collectin Metrics...the results can be found here: {workbook_name} ")
 
 
 if __name__ == "__main__":
