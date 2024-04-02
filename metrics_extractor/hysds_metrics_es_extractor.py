@@ -16,16 +16,26 @@
 #   2024-03-18: clean up code. added documentation. added args options for --verbose and --debug to vary logger levels.
 #   2024-03-29: Refactored most of code base. The code I originally was working with was written quickly and was not Pythonic.
 #               A quick overview of the major changes: Moved all imports to the top, created a main function, created functions for major tasks. Re-indented file using the command "black --line-length 90 <filename>"
+#   2024-04-01: Added in a variable to determine how many digits after the decimal are desired to be reported. Fixes the "Data Conversion" error that would happen with all previously generated spreadsheets
+#               Refactored the following functions [get_job_metrics_aggregration, export_job_metrics_to_csv, get_counts_by_job_name, export_job_counts_to_csv]
+#                   -get_job_metrics_aggregration : Added a parameter for desired rounding. Changed the "job_metrics" data structure holding the Metrics for EC2 Instances Metrics per Job Type from a tuple, to a dictionary
+#                   -export_job_metrics_to_csv : Adjusted for the change that was made to the "job_metrics" data strucutre
+#                   -get_counts_by_job_name : Simplified the function to be faster & simpler. Also added a parameter for desired rounding. Changed the count_by_job_name to use a dictionary instead of a tuple for aggregate information
+#                   -export_job_counts_to_csv : Adjusted for the change that was made in "get_counts_by_job_name"
+#               
+#               
 # ----------------------------------------------------------------
 from argparse import ArgumentParser
-from datetime import datetime, timedelta, timezone
-import logging
-from urllib.parse import urlsplit
-import requests
-import json
-import sys
-import getpass
+from collections import defaultdict
 import csv
+from datetime import datetime, timedelta, timezone
+import getpass
+import json
+import logging
+import requests
+import sys
+from urllib.parse import urlsplit
+
 
 #### Create ERROR Codes
 ERR_INVALID_INPUTS = -3
@@ -126,8 +136,6 @@ def _get_es_aggregations_buckets_keys(session, api_url, query):
 
     logging.debug(f"keys_counts: {keys_counts}")
     return keys_counts
-
-
 # end def
 
 
@@ -204,8 +212,6 @@ def _get_es_aggregations_value(session, api_url, query):
         f"hits_total_relation: {hits_total_relation}, hits_total_value: {hits_total_value}, value: {value}"
     )
     return (hits_total_relation, hits_total_value, value)
-
-
 # end def
 
 
@@ -312,8 +318,6 @@ def _get_es_aggs_avg_field(
         f"hits_total_relation: {hits_total_relation}, hits_total_value: {hits_total_value}, avg_value: {avg_value}"
     )
     return (hits_total_relation, hits_total_value, avg_value)
-
-
 # end def
 
 
@@ -409,8 +413,6 @@ def get_job_types(session, api_url, time_start, time_end):
 
     logging.debug(f"keys_counts: {keys_counts}")
     return keys_counts
-
-
 # end def
 
 
@@ -508,8 +510,6 @@ def get_instance_types_by_job_type(session, api_url, time_start, time_end, job_t
 
     logging.debug(f"keys_counts: {keys_counts}")
     return keys_counts
-
-
 # end def
 
 
@@ -531,8 +531,6 @@ def get_job_runtime(session, api_url, time_start, time_end, job_type, instance_t
         session, api_url, time_start, time_end, job_type, exit_code, instance_type, field
     )
     return (hits_total_relation, hits_total_value, avg_value)
-
-
 # end def
 
 
@@ -557,8 +555,6 @@ def get_container_runtime(
         session, api_url, time_start, time_end, job_type, exit_code, instance_type, field
     )
     return (hits_total_relation, hits_total_value, avg_value)
-
-
 # end def
 
 
@@ -580,8 +576,6 @@ def get_stage_in_size(session, api_url, time_start, time_end, job_type, instance
         session, api_url, time_start, time_end, job_type, exit_code, instance_type, field
     )
     return (hits_total_relation, hits_total_value, avg_value)
-
-
 # end def
 
 
@@ -603,8 +597,6 @@ def get_stage_in_rate(session, api_url, time_start, time_end, job_type, instance
         session, api_url, time_start, time_end, job_type, exit_code, instance_type, field
     )
     return (hits_total_relation, hits_total_value, avg_value)
-
-
 # end def
 
 
@@ -627,8 +619,6 @@ def get_stage_out_size(session, api_url, time_start, time_end, job_type, instanc
         session, api_url, time_start, time_end, job_type, exit_code, instance_type, field
     )
     return (hits_total_relation, hits_total_value, avg_value)
-
-
 # end def
 
 
@@ -651,13 +641,11 @@ def get_stage_out_rate(session, api_url, time_start, time_end, job_type, instanc
         session, api_url, time_start, time_end, job_type, exit_code, instance_type, field
     )
     return (hits_total_relation, hits_total_value, avg_value)
-
-
 # end def
 
 
 def get_job_metrics_aggregration(
-    session, es_url, dt_start, dt_end, dt_days, es_timestamp_fmt
+    session, es_url, dt_start, dt_end, dt_days, es_timestamp_fmt, desired_rounding
 ):
     """
     Gets the aggregrations of job metrics by job_type and instance_type.
@@ -666,6 +654,8 @@ def get_job_metrics_aggregration(
     @param es_url: the api end point to elasticsearch.
     @param dt_start: the start time constraint for ES query.
     @param dt_end: the end time constraint for ES query.
+    @param desired_rounding: The desired precision for rounding collected metrics
+
     @return: dict of job_metrics[job_type][instance_type] = (job_runtime_m, container_runtime_m, stage_in_size_gb, stage_out_size_gb, stage_in_rate_MBps, stage_out_rate_MBps, daily_count_mean, count, duration_days)
     """
 
@@ -680,7 +670,6 @@ def get_job_metrics_aggregration(
     job_type_counts = get_job_types(session, es_url, time_start, time_end)
     for job_type, job_type_count in sorted(job_type_counts):
         logging.info(f"job_type: {job_type} --------------------")
-
         try:
             metrics_job_type = job_metrics[job_type]
         except KeyError as e:
@@ -694,7 +683,6 @@ def get_job_metrics_aggregration(
         )
         for instance_type, instance_type_count in sorted(instance_type_counts):
             logging.info(f"    instance_type: {instance_type}")
-
             (count_relation, count, job_runtime) = get_job_runtime(
                 session, es_url, time_start, time_end, job_type, instance_type
             )
@@ -713,7 +701,6 @@ def get_job_metrics_aggregration(
             except TypeError as e:
                 daily_count_mean = ""
             # end try-except
-
             (count_relation, count, container_runtime) = get_container_runtime(
                 session, es_url, time_start, time_end, job_type, instance_type
             )
@@ -732,7 +719,6 @@ def get_job_metrics_aggregration(
             except TypeError as e:
                 daily_count_mean = ""
             # end try-except
-
             (count_relation, count, stage_in_size_bytes) = get_stage_in_size(
                 session, es_url, time_start, time_end, job_type, instance_type
             )
@@ -743,7 +729,6 @@ def get_job_metrics_aggregration(
             except TypeError as e:
                 stage_in_size_gb = ""
             # end try-except
-
             (count_relation, count, stage_in_rate_bps) = get_stage_in_rate(
                 session, es_url, time_start, time_end, job_type, instance_type
             )
@@ -754,7 +739,6 @@ def get_job_metrics_aggregration(
             except TypeError as e:
                 stage_in_rate_MBps = ""
             # end try-except
-
             (count_relation, count, stage_out_size_bytes) = get_stage_out_size(
                 session, es_url, time_start, time_end, job_type, instance_type
             )
@@ -765,7 +749,6 @@ def get_job_metrics_aggregration(
             except TypeError as e:
                 stage_out_size_gb = ""
             # end try-except
-
             (count_relation, count, stage_out_rate_bps) = get_stage_out_rate(
                 session, es_url, time_start, time_end, job_type, instance_type
             )
@@ -777,23 +760,29 @@ def get_job_metrics_aggregration(
                 stage_out_rate_MBps = ""
             # end try-except
 
-            metrics_job_type[instance_type] = (
-                job_runtime_m,
-                container_runtime_m,
-                stage_in_size_gb,
-                stage_out_size_gb,
-                stage_in_rate_MBps,
-                stage_out_rate_MBps,
-                daily_count_mean,
-                count,
-                dt_days,
-            )
+            # Collect all the metrics and store them in a dictionary
+            metrics_job_type[instance_type] = {
+                "job_runtime_m": job_runtime_m,
+                "container_runtime_m": container_runtime_m,
+                "stage_in_size_gb": stage_in_size_gb,
+                "stage_out_size_gb": stage_out_size_gb,
+                "stage_in_rate_MBps": stage_in_rate_MBps,
+                "stage_out_rate_MBps": stage_out_rate_MBps,
+                "daily_count_mean": daily_count_mean,
+                "count": count,
+                "duration_days": dt_days,
+            }
+
+            # Round all of the Job Metric information to make things consistent and work nicer with Excel
+            for metrics in metrics_job_type.values():
+                for key, value in metrics.items():
+                    if value is None or value == "":
+                        pass  # Don't add a value...may eventually change to "N/A"
+                    elif isinstance(value, float):
+                        metrics[key] = round(value, desired_rounding)
         # end for
     # end for
-
     return job_metrics
-
-
 # end def
 
 
@@ -803,7 +792,6 @@ def export_job_metrics_to_csv(job_metrics, csv_filepath):
     @param job_metrics: the dict of job metrics returned by get_job_metrics_aggregration()
     @param csv_filepath: the file path to the output csv.
     """
-
     import csv
 
     with open(csv_filepath, mode="w") as csv_out:
@@ -829,19 +817,22 @@ def export_job_metrics_to_csv(job_metrics, csv_filepath):
 
         for job_type in sorted(job_metrics.keys()):
             metrics_job_type = job_metrics[job_type]
-
             for instance_type in sorted(metrics_job_type.keys()):
-                (
-                    job_runtime_m,
-                    container_runtime_m,
-                    stage_in_size_gb,
-                    stage_out_size_gb,
-                    stage_in_rate_MBps,
-                    stage_out_rate_MBps,
-                    daily_count_mean,
-                    count,
-                    duration_days,
-                ) = metrics_job_type[instance_type]
+                # Grab all of the metrics we've stored
+                job_runtime_m = metrics_job_type[instance_type]["job_runtime_m"]
+                container_runtime_m = metrics_job_type[instance_type][
+                    "container_runtime_m"
+                ]
+                stage_in_size_gb = metrics_job_type[instance_type]["stage_in_size_gb"]
+                stage_out_size_gb = metrics_job_type[instance_type]["stage_out_size_gb"]
+                stage_in_rate_MBps = metrics_job_type[instance_type]["stage_in_rate_MBps"]
+                stage_out_rate_MBps = metrics_job_type[instance_type][
+                    "stage_out_rate_MBps"
+                ]
+                daily_count_mean = metrics_job_type[instance_type]["daily_count_mean"]
+                count = metrics_job_type[instance_type]["count"]
+                duration_days = metrics_job_type[instance_type]["duration_days"]
+
                 logging.debug(
                     f"  {job_type} - {instance_type} : {job_runtime_m}, {container_runtime_m}, {stage_in_size_gb}, {stage_out_size_gb}, {instance_type}, {stage_in_rate_MBps}, {stage_out_rate_MBps}, {daily_count_mean}, {count}, {duration_days}"
                 )
@@ -865,75 +856,46 @@ def export_job_metrics_to_csv(job_metrics, csv_filepath):
         # end for
     # end with open csv
     logging.info(f"...exported metrics to {csv_filepath}")
-
-
 # end def
 
 
-def get_counts_by_job_name(job_metrics):
+def get_counts_by_job_name(job_metrics, duration_days, desired_rounding):
     """
     Gets job names (no version) and counts that merges each job_type's versions and instance_types together.
     @param job_metrics: the dict of job metrics returned by get_job_metrics_aggregration()
-    @return: dict of counts_by_job_name[job_type_name] = (count_avg, count_total, duration_days) for each canonical job--regardless of its versions and instance types.
+    @param duration_days: Number of days over which counts are aggregated.
+    @param desired_rounding: The desired amount of significant digits after the decimal point for collected metrics
+
+    @return: Dictionary with job type names as keys and another dictionary with total counts and average counts as values.
     """
 
-    counts_by_job_name = dict()
-    duration_days = None  # same for all job metric here
+    counts_by_job_name = defaultdict(list)  # Holds counts for each job type name.
 
-    for job_type in sorted(job_metrics.keys()):
-        # job_type has foramt "job-SCIFLO_L0B_KCAL_Frame:release-v5.1.0-beta.0"
-        # split into job_type name and version
-        job_type_tokens = job_type.split(":")
-        logging.debug(f"job_type_tokens:  {job_type_tokens}")
-        job_type_name = job_type_tokens[0]
-        job_type_version = job_type_tokens[1]
+    for job_type, metrics in job_metrics.items():
+        job_type_name, job_type_version = job_type.split(":")  # Split for logging.
+        logging.debug(f"job_type_tokens:  {job_type_name}, {job_type_version}")
 
-        try:
-            counts = counts_by_job_name[job_type_name]
-        except KeyError as e:
-            # initialize
-            counts = list()
-            counts_by_job_name[job_type_name] = counts
-        # end try-except
-
-        metrics_job_type = job_metrics[job_type]
-        for instance_type in sorted(metrics_job_type.keys()):
-            (
-                job_runtime_m,
-                container_runtime_m,
-                stage_in_size_gb,
-                stage_out_size_gb,
-                stage_in_rate_MBps,
-                stage_out_rate_MBps,
-                daily_count_mean,
-                count,
-                duration_days,
-            ) = metrics_job_type[instance_type]
+        for instance_type, instance_metrics in metrics.items():
+            counts_by_job_name[job_type_name].append(instance_metrics["count"])
             logging.debug(
-                f"  {job_type_name} - {job_type_version} - {instance_type} : {count} jobs over {duration_days} days"
+                f"  {job_type_name} - {job_type_version} - {instance_type} : {instance_metrics['count']} jobs over {duration_days} days"
             )
-            counts.append(count)
-        # end for
-    # end for
 
-    # get average counts over duration for each job's counts
-    for job_type_name in sorted(counts_by_job_name.keys()):
-        counts = counts_by_job_name[job_type_name]
-        count_total = sum(counts)
-        count_avg = count_total / duration_days
+    final_counts = {}  # Final output dictionary.
+    for job_type_name, counts in counts_by_job_name.items():
+        count_total = sum(counts)  # Total counts for this job type.
+        count_avg = round(count_total / duration_days, desired_rounding)  # Average count.
+        # Store total and average count separately in a nested dictionary.
+        final_counts[job_type_name] = {
+            "count_total": count_total,
+            "count_avg": count_avg,
+            "duration_days": duration_days,
+        }
         logging.debug(
-            f"  {job_type_name} has counts {counts} over {duration_days} days. total {count_total} and average {count_avg}"
+            f"  {job_type_name}: Total {count_total}, Average {count_avg} over {duration_days} days."
         )
 
-        # update item with tuple
-        counts_by_job_name[job_type_name] = (count_avg, count_total, duration_days)
-    # end for
-
-    return counts_by_job_name
-
-
-# end def
-
+    return final_counts
 
 def export_job_counts_to_csv(counts_by_job_name, csv_filepath):
     """
@@ -941,7 +903,6 @@ def export_job_counts_to_csv(counts_by_job_name, csv_filepath):
     @param counts_by_job_name: the dict of counts_by_job_name[job_type_name] = (count_avg, count_total, duration_days)
     @param csv_filepath: the file path to the output csv.
     """
-
     with open(csv_filepath, mode="w") as csv_out:
         logging.debug(f"writing to {csv_filepath}...")
         csv_writer = csv.writer(
@@ -950,9 +911,11 @@ def export_job_counts_to_csv(counts_by_job_name, csv_filepath):
         csv_writer.writerow(
             ["job name", "daily count avg", "count over duration", "duration days"]
         )
-
         for job_type_name in sorted(counts_by_job_name.keys()):
-            (count_avg, count_total, duration_days) = counts_by_job_name[job_type_name]
+            count_avg = counts_by_job_name[job_type_name]["count_avg"]
+            count_total = counts_by_job_name[job_type_name]["count_total"]
+            duration_days = counts_by_job_name[job_type_name]["duration_days"]
+
             logging.debug(
                 f"  {job_type_name}: count_avg={count_avg} , count_total={count_total} , duration_days={duration_days}"
             )
@@ -960,8 +923,6 @@ def export_job_counts_to_csv(counts_by_job_name, csv_filepath):
         # end for
     # end with open csv
     logging.info(f"...exported metrics to {csv_filepath}")
-
-
 # end def
 
 
@@ -1167,6 +1128,9 @@ def main():
     time_start = input_args["time_start"]
     time_end = input_args["time_end"]
 
+    # Will eventually want to define this better. Either with a better var-name or by being user-input
+    desired_rounding = 4  # Determine the amount of siginifcant digits our metrics will have
+
     # ----------------------------------------------------------------
     # determine start and end times.
     # if days_back is given, use based from now.
@@ -1210,7 +1174,13 @@ def main():
     # for each job type, for each instance type, get metrics.
     # job_metrics[job_type][instance_type] = (job_runtime_m, container_runtime_m, stage_in_size_gb, stage_out_size_gb, stage_in_rate_MBps, stage_out_rate_MBps, daily_count_mean, count, duration_days)
     job_metrics = get_job_metrics_aggregration(
-        session, es_url, dt_start, dt_end, duration_days, es_timestamp_fmt
+        session,
+        es_url,
+        dt_start,
+        dt_end,
+        duration_days,
+        es_timestamp_fmt,
+        desired_rounding,
     )
 
     # export job metrics to csv
@@ -1220,8 +1190,9 @@ def main():
     # ----------------------------------------------------------------
     # get the counts_by_job_name[job_type_name] = (count_avg, count_total, duration_days)
 
-    # get job names, merged versions and instance types.
-    counts_by_job_name = get_counts_by_job_name(job_metrics)
+    counts_by_job_name = get_counts_by_job_name(
+        job_metrics, duration_days, desired_rounding
+    )
 
     # export job metrics to csv
     csv_filepath = f"job_counts_by_name {hostname} {dt_start.strftime(iso8601_basic_fmt)}-{dt_end.strftime(iso8601_basic_fmt)} spanning {str(duration_days)} days.csv"
