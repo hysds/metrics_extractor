@@ -5,8 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.0.6] - 2024-04-02:
 
+## [0.0.7] - 2024-04-10:
+### Added in an optional Basic Product Estimation Sheet 
+- Added in the "add_hardware_stats...", "add_network_stats..." "get_product_estimates" and "format_product_estimates" functions for product estimation
+- Added in new input parameter for optionally generating the product estimates sheet
+
+## [0.0.6] - 2024-04-02:
 ### Refactoed the Job Metrics Dataframe, Replaced CSV generation with a single Excel Workbook creation
 - Transitioned Job Metrics storage from dictionary to pandas DataFrame for enhanced data manipulation and analysis.
 - Revised the creation process for Job Counts by Metrics to leverage pandas capabilities, improving efficiency and readability.
