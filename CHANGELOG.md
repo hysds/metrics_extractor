@@ -5,6 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.8] - 2024-04-25:
+### Removed All functionality of creating Cost Estimation from Metrics Extractor
+- Per Hook's suggestion, I have removed the functionality of the Cost Estimation to a seperate tool. It will subsequently be added once ready.
 
 ## [0.0.7] - 2024-04-10:
 ### Added in an optional Basic Product Estimation Sheet 

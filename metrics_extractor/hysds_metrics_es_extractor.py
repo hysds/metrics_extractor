@@ -31,6 +31,8 @@
 # 2024-04-10:
 #               - Added in the "add_hardware_stats...", "add_network_stats..." "get_product_estimates" and "format_product_estimates" functions for product estimation
 #               - Added in new input parameter for optionally generating the product estimates sheet
+# 2024-04-25
+#               - Removed all functionality relating to creating a Cost Estimate Spreadsheet. This capability has been moved to a new tool.
 #
 #
 # ----------------------------------------------------------------
@@ -884,213 +886,6 @@ def aggregate_job_metrics_by_count(job_metrics_df):
     return aggregated_df
 
 
-def get_ref_ec2_info(cost_production_estimates_filename):
-    """
-    Find the Cost Production Workbook within the directory where the script is run, and load it into a dateframe
-
-    @param cost_product_estimates_filename (str) : The filename of the Cost Product Estimates Excel Workbook
-    @returns ref_ec2_df (pd.Dataframe) : A dataframe containing all of the information for AWS EC2 Instances
-    """
-
-    # Hook's sheet has an empty row at the beginning. I don't know if that's supposed to be there or not, so I will just work around it
-    starting_row = 1
-    ref_ec2_df = pd.read_excel(
-        cost_production_estimates_filename,
-        sheet_name="ref_aws_ec2",
-        header=starting_row,
-    )
-
-    # Hook has a column labeled "Sticky Favorite" that helps him sort the entire workbook. It's not necessary for what I'd like to do
-    ref_ec2_df.drop(columns=["Sticky Favorite"], inplace=True)
-
-    return ref_ec2_df
-
-
-def add_hardware_stats_to_product_estimates(
-    product_estimates_df, ref_ec2_df, minimum_ebs_size_gb, ebs_gp3_cost_in_us_west_2
-):
-    """
-    Add in the Hardware Stats for the EC2 Instances that will be used to create Product Estimates
-
-    @param product_estimates_df (pd.DataFrame): DataFrame of Product Estimates containing base Product Estimates
-    @param ref_ec2_df (pd.Dataframe) : Dataframe containing all of the information for an EC2 Instance
-    @param minimum_ebs_size_gb (int) : The minimum size in GB for EBS disk space used by a Job for Cost Estimation
-    @param ebs_gp3_cost_in_us_west_2 (float) : How much it costs to host 1GB of EBS in the us-west-2 region
-    @returns product_estimates (pd.Dataframe) : Dataframe containing the calculated product metrics for a HySDS cluster with newly added Hardware Stats
-    """
-
-    """
-    # Looking at Hook's Cost model, it looks like the "Effective Threads" of his cost model seems to be a copy of the vCPUs"
-    effective_threads_col = ref_ec2_df["vCPUs"].copy()
-    ref_ec2_df["Effective Threads"] = effective_threads_col
-
-    desired_ec2_stats = ["API Name", "Physical Processor", "vCPUs", "Instance Memory (GiB)", "Effective Threads", "GiB of Memory per vCPU", "Instance Storage" ]
-    instance_stats_df = ref_ec2_df[desired_ec2_stats].copy()
-    """
-
-    desired_hardware_stats = [
-        "API Name",
-        "Physical Processor",
-        "vCPUs",
-        "Instance Memory (GiB)",
-        "GiB of Memory per vCPU",
-        "Instance Storage",
-    ]
-    instance_hardware_stats_df = ref_ec2_df[desired_hardware_stats].copy()
-
-    ### Merge the Instance Hardware Stats with the Base Information Provided by the Metrics Extraction
-    product_estimates_df = pd.merge(
-        product_estimates_df, instance_hardware_stats_df, on="API Name", how="left"
-    )
-
-    # These are naturally objects in the Dataframe, must change them to actual numbers
-    columns_to_make_numeric = [
-        "compute instance cost ($/hr)",
-        "stage_in_size_gb",
-        "stage_out_size_gb",
-        "job_runtime_m",
-    ]
-    for col in columns_to_make_numeric:
-        product_estimates_df[col] = pd.to_numeric(
-            product_estimates_df[col], errors="coerce"
-        )
-
-    # Estimate the EBS Size used by the PGE. It will default to 50GB.
-    product_estimates_df["EBS scratch Disk General Purpose SSD gp3 Volumes (GB)"] = (
-        product_estimates_df["stage_in_size_gb"]
-        + product_estimates_df["stage_out_size_gb"] * 2.5
-    ).clip(lower=minimum_ebs_size_gb)
-
-    product_estimates_df[
-        "EBS gp3 cost/GB/month in us-west-2"
-    ] = ebs_gp3_cost_in_us_west_2
-
-    return product_estimates_df
-
-
-def add_network_stats_to_product_estimates(product_estimates_df, ref_ec2_df):
-    """
-    Add in the Network Stats for the EC2 Instances that will be used to create Product Estimates
-
-    @param product_estimates (pd.Dataframe) : Dataframe containing the calculated product metrics for a HySDS cluster
-    @param ref_ec2_df (pd.Dataframe) : Dataframe containing all of the information for an EC2 Instance
-    @returns product_estimates (pd.Dataframe) : Dataframe containing the calculated product metrics for a HySDS cluster with newly added network stats
-    """
-
-    network_performance_df = ref_ec2_df[["API Name", "Network Performance"]].copy()
-    product_estimates_df = pd.merge(
-        product_estimates_df, network_performance_df, on="API Name", how="left"
-    )
-
-    columns_to_reorder = ["stage_in_rate_MBps", "stage_out_rate_MBps"]
-    new_column_order = [
-        col for col in product_estimates_df.columns if col not in columns_to_reorder
-    ] + columns_to_reorder
-    product_estimates_df = product_estimates_df[new_column_order]
-
-    # Get the Data Staging Time in Minutes
-    product_estimates_df["Data Stage-In time (minutes)"] = (
-        (product_estimates_df["stage_in_size_gb"] * 1024)
-        / product_estimates_df["stage_in_rate_MBps"]
-    ) / 60
-    product_estimates_df["Data Stage-Out time (minutes)"] = (
-        (product_estimates_df["stage_out_size_gb"] * 1024)
-        / product_estimates_df["stage_out_rate_MBps"]
-    ) / 60
-
-    # Get the Job RunTime With Data movement
-    product_estimates_df["Job Runtime with data movement (hours)"] = (
-        (
-            product_estimates_df["job_runtime_m"]
-            + product_estimates_df["Data Stage-In time (minutes)"]
-            + product_estimates_df["Data Stage-Out time (minutes)"]
-        )
-        / 60
-    ).astype(float)
-
-    product_estimates_df[
-        "Total Job Runtime to use for estimating per job cost (hours)"
-    ] = (product_estimates_df["job_runtime_m"] / 60)
-
-    return product_estimates_df
-
-
-def get_product_estimates(job_metrics_df, ref_ec2_df, wanted_compute_type):
-    """
-    Takes in the collected Job Metrics and the Reference AWS EC2 Information to create product estimates for the cost of
-    a single job, for each PGE, on each EC2 Instance
-
-    @param job_metrics_df (pd.DataFrame): DataFrame with columns including JobType, daily_count_mean, count, duration_days, and potentially others.
-    @param ref_ec2_df (pd.Dataframe) : Dataframe containing all of the information for an EC2 Instance
-    @param wanted_compute_type (str) : The Instance Type that will be used to determine pricing for the Estimates, e.g. (Spot, On-Demand, RI-3)
-    @returns product_estimates (pd.Dataframe) : Dataframe containing the calculated product metrics for a HySDS cluster
-    """
-
-    # Start to build the Product Estimates Sheet that Hook has
-    starting_production_estimate_cols = [
-        "JobType",
-        "job_runtime_m",
-        "stage_in_size_gb",
-        "stage_out_size_gb",
-        "stage_in_rate_MBps",
-        "stage_out_rate_MBps",
-        "InstanceType",
-    ]
-    product_estimates_df = job_metrics_df[starting_production_estimate_cols].copy()
-
-    # Figure out the Compute_Type I'm going to be looking at and add that to my dataframe
-    product_estimates_df["Compute Billing Type"] = wanted_compute_type
-
-    # Grab the pricing info for the aforementioned compute type from the ref_ec2_df to append only those columnds to the product_estimates_df
-    pricing_info_df = ref_ec2_df[["API Name", wanted_compute_type]].copy()
-
-    # Merge the pricing information with the product_estimates_df, drop the API_NAME as it's redudant
-    product_estimates_df = product_estimates_df.merge(
-        pricing_info_df, left_on="InstanceType", right_on="API Name", how="left"
-    )
-
-    # Rename the Spot (Avg) to something more useful
-    product_estimates_df.rename(
-        columns={wanted_compute_type: "compute instance cost ($/hr)"}, inplace=True
-    )
-
-    minimum_ebs_size_gb = 50
-    ebs_gp3_cost_in_us_west_2 = 0.08  # EBS gp3 cost/GB/month in us-west-2
-    product_estimates_df = add_hardware_stats_to_product_estimates(
-        product_estimates_df, ref_ec2_df, minimum_ebs_size_gb, ebs_gp3_cost_in_us_west_2
-    )
-    product_estimates_df = add_network_stats_to_product_estimates(
-        product_estimates_df, ref_ec2_df
-    )
-
-    ### Figure out the Cost of a single Job run
-    # Figure out how much it "theoritically" cost to run our instance for the time that it was alive
-    product_estimates_df["EC2 Instance cost (for duration of job)"] = (
-        product_estimates_df["compute instance cost ($/hr)"]
-        * product_estimates_df[
-            "Total Job Runtime to use for estimating per job cost (hours)"
-        ]
-    )
-
-    # Figure out the cost for the EBS Scratch Disk used by the Job
-    product_estimates_df["EBS scratch disk cost (for duration of job)"] = (
-        product_estimates_df["EBS scratch Disk General Purpose SSD gp3 Volumes (GB)"]
-        * product_estimates_df["EBS gp3 cost/GB/month in us-west-2"]
-        * (product_estimates_df["Job Runtime with data movement (hours)"] / 24 * 60)
-    )
-
-    # Add the two previous costs for the cost of a single run
-    product_estimates_df["Cost of a single job run"] = (
-        product_estimates_df["Job Runtime with data movement (hours)"]
-        + product_estimates_df["EBS scratch disk cost (for duration of job)"]
-    )
-
-    # Drop the API Column that was useful for Merging Dataframes...it's a copy of the "Instance Type" column
-    product_estimates_df.drop("API Name", axis=1, inplace=True)
-
-    return product_estimates_df
-
-
 # ------ Begin Excel/Formatting Functions ------
 def auto_size_columns(sheet, width_buffer):
     """
@@ -1138,15 +933,6 @@ def format_job_metrics_by_count(sheet):
     auto_size_columns(sheet, width_buffer)
 
 
-def format_product_estimates(sheet):
-    """
-    Perform the desired formatting changes for the Spreadsheet containing the Product Estimates
-    @param sheet (openpyxl.worksheet.worksheet.Worksheet): The Metrics by Job Count Sheet
-    """
-    width_buffer = 0.8
-    auto_size_columns(sheet, width_buffer)
-
-
 def write_dfs_to_excel(dfs, workbook_name):
     """
     Writes multiple DataFrames to an Excel workbook, each DataFrame to a separate sheet.
@@ -1171,8 +957,7 @@ def write_dfs_to_excel(dfs, workbook_name):
             elif sheet_name == "job_metrics_by_count":
                 format_job_metrics_by_count(sheet)
 
-            elif sheet_name == "product_estimates":
-                format_product_estimates(sheet)
+
 
         # Note: The workbook is automatically saved when exiting the 'with' block.
         # If you'd like to do more stuff to the workbook once all sheets are added, you can do so outside this function
@@ -1472,29 +1257,10 @@ def main():
     # Aggregate all Metrics by Job Count, stripping away the versioning from the Job Types
     metrics_by_job_count_df = aggregate_job_metrics_by_count(job_metrics_df)
 
-    # Determine whether or not the Product Estimation Sheet will be generated
-    if input_args["cost_estimate_file"] is None:
-        dataframes = {
+    # Organize the Dataframes in a dictionary to keep track of them
+    dataframes = {
             "job_aggregate_metrics": job_metrics_df,
             "job_metrics_by_count": metrics_by_job_count_df,
-        }
-    else:
-        # Load Up the EC2 Information into a dataframe
-        cost_production_estimates_filename = (
-            "../../../cost_production_estimate_template_2024-03-26.xlsx"
-        )
-
-        # Decide what kind of EC2 Compute Types we'd like to Estimate for
-        wanted_compute_type = "Spot (avg)"
-
-        ref_ec2_df = get_ref_ec2_info(cost_production_estimates_filename)
-        product_estimates_df = get_product_estimates(job_metrics_df, ref_ec2_df, wanted_compute_type)
-
-        # Organize the Dataframes in a dictionary to keep track of them
-        dataframes = {
-            "job_aggregate_metrics": job_metrics_df,
-            "job_metrics_by_count": metrics_by_job_count_df,
-            "product_estimates": product_estimates_df,
         }
 
     # Save the Dataframes to an Excel Workbook
