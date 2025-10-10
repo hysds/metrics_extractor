@@ -26,6 +26,9 @@ import getpass
 from argparse import ArgumentParser
 
 # Import functions from the original script
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'metrics_extractor'))
+
 from hysds_metrics_es_extractor import get_instance_types_by_job_type
 
 

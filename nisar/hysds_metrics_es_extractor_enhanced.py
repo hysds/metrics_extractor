@@ -25,6 +25,9 @@ import getpass
 from argparse import ArgumentParser
 
 # Import functions from the original script
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'metrics_extractor'))
+
 from hysds_metrics_es_extractor import (
     _get_es_aggregations_buckets_keys,
     _get_es_aggregations_value,
