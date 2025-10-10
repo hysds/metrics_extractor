@@ -10,8 +10,7 @@ nisar/
 ├── README_ENHANCED.md                          # Detailed technical documentation
 ├── NISAR_MIXED_MODES_CONFIG_20200101T000000_01.json  # NISAR beam mode configurations
 ├── hysds_metrics_es_extractor_enhanced.py      # Enhanced metrics extractor with hierarchical breakdown
-├── job_execution_time_extractor.py             # Specialized execution time analyzer
-└── generated_csv_files/                        # Output CSV files (created when scripts run)
+└── job_execution_time_extractor.py             # Specialized execution time analyzer
 ```
 
 ## 🎯 Purpose
@@ -107,8 +106,7 @@ your_project/
 ├── README.md
 ├── your_project_config.json
 ├── hysds_metrics_es_extractor_enhanced.py  # Adapted version
-├── job_execution_time_extractor.py         # Adapted version
-└── generated_csv_files/
+└── job_execution_time_extractor.py         # Adapted version
 ```
 
 ## 📚 Documentation
