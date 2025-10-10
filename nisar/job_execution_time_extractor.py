@@ -116,10 +116,11 @@ def parse_job_id_patterns(job_ids, job_type):
     if "SCIFLO_RSLC" in job_type:
         # Use the specific regex pattern provided by user
         # Pattern: "_(?P<coverage>full|partial)_(?P<acquisition_mode>individual|mixed)_(?P<beam_name>L_\d{2}_\w{2}_\d{2}_\w{2})_"
+        # Made more flexible to handle job IDs that continue after the beam name
         patterns = {
-            "beam_name": r"_(?P<coverage>full|partial)_(?P<acquisition_mode>individual|mixed)_(?P<beam_name>L_\d{2}_\w{2}_\d{2}_\w{2})_",  # Primary: beam_name
-            "coverage": r"_(?P<coverage>full|partial)_(?P<acquisition_mode>individual|mixed)_(?P<beam_name>L_\d{2}_\w{2}_\d{2}_\w{2})_",  # Secondary: coverage
-            "acquisition_mode": r"_(?P<coverage>full|partial)_(?P<acquisition_mode>individual|mixed)_(?P<beam_name>L_\d{2}_\w{2}_\d{2}_\w{2})_",  # Tertiary: acquisition_mode
+            "beam_name": r"_(?P<coverage>full|partial)_(?P<acquisition_mode>individual|mixed)_(?P<beam_name>L_\d{2}_\w{2}_\d{2}_\w{2})",  # Primary: beam_name
+            "coverage": r"_(?P<coverage>full|partial)_(?P<acquisition_mode>individual|mixed)_(?P<beam_name>L_\d{2}_\w{2}_\d{2}_\w{2})",  # Secondary: coverage
+            "acquisition_mode": r"_(?P<coverage>full|partial)_(?P<acquisition_mode>individual|mixed)_(?P<beam_name>L_\d{2}_\w{2}_\d{2}_\w{2})",  # Tertiary: acquisition_mode
         }
 
     # Analyze the actual job_ids to refine patterns
