@@ -1,131 +1,206 @@
 # NISAR Project Metrics Extractor
 
-This directory contains NISAR-specific adaptations of the HySDS Metrics Extractor for analyzing SCIFLO_RSLC job performance with hierarchical breakdown by NISAR beam modes.
+This directory contains NISAR-specific tools for analyzing PGE job performance metrics.
 
-## 📁 Directory Structure
+## Directory Structure
 
 ```
 nisar/
 ├── README.md                                    # This file
-├── README_ENHANCED.md                          # Detailed technical documentation
+├── README_ENHANCED.md                           # Technical documentation for enhanced extractor
 ├── NISAR_MIXED_MODES_CONFIG_20200101T000000_01.json  # NISAR beam mode configurations
-├── hysds_metrics_es_extractor_enhanced.py      # Enhanced metrics extractor with hierarchical breakdown
-└── job_execution_time_extractor.py             # Specialized execution time analyzer
+├── hysds_metrics_es_extractor_enhanced.py       # Enhanced metrics extractor with hierarchical breakdown
+├── job_execution_time_extractor.py              # Legacy RSLC execution time analyzer
+├── pge_execution_time_extractor.py              # Multi-PGE execution time extractor
+└── compare_pge_versions.py                      # PGE version comparison tool
 ```
 
-## 🎯 Purpose
+## Tools
 
-These scripts extend the base `hysds_metrics_es_extractor.py` to provide NISAR-specific analysis capabilities:
+### 1. PGE Execution Time Extractor
 
-1. **Hierarchical Job Breakdown**: Breaks down SCIFLO_RSLC jobs by:
-   - **Primary**: NISAR beam modes (e.g., `L_40_DH_05_DH`, `L_20_QP_05_QP`)
-   - **Secondary**: Coverage type (`full`, `partial`)
-   - **Tertiary**: Acquisition mode (`individual`, `mixed`)
+Extracts job execution times for any NISAR PGE type filtered by data day.
 
-2. **Execution Time Analysis**: Specialized analysis of job execution times using wall_time metrics
+**Supported PGE Types:** L0B, RSLC, GSLC, GCOV, INSAR, L3_SM
 
-## 🚀 Quick Start
+**Features:**
+- Extracts PGE container execution time (lesser of two wall_time values)
+- Filters jobs by data day (extracted from product timestamps)
+- Generates match_id using all product timestamps for version comparison
+- Supports credential caching via environment variables or system keychain
+- Outputs CSV with summary statistics and individual job details
 
-### Prerequisites
-- Python 3.7+
-- Access to ElasticSearch instance with HySDS metrics
-- NISAR project credentials
-
-### Basic Usage
-
-#### 1. Enhanced Metrics Extractor (Hierarchical Breakdown)
+**Usage:**
 ```bash
-cd /path/to/metrics_extractor/nisar
+# List available data days
+python pge_execution_time_extractor.py \
+  --pge_type=RSLC \
+  --list-data-days \
+  --es_url="https://venue/mozart_es/logstash-*/_search"
+
+# Extract metrics for a specific data day
+python pge_execution_time_extractor.py \
+  --pge_type=RSLC \
+  --data_day=2025-11-10 \
+  --es_url="https://venue/mozart_es/logstash-*/_search"
+
+# Extract metrics for a specific PGE version
+python pge_execution_time_extractor.py \
+  --pge_type=RSLC \
+  --data_day=2025-11-10 \
+  --job_type="job-SCIFLO_RSLC:release-r05.00.0" \
+  --es_url="https://venue/mozart_es/logstash-*/_search"
+```
+
+**Arguments:**
+| Argument | Description |
+|----------|-------------|
+| `--pge_type` | PGE type: L0B, RSLC, GSLC, GCOV, INSAR, L3_SM (required) |
+| `--es_url` | Elasticsearch URL endpoint (required) |
+| `--data_day` | Filter by data day in YYYY-MM-DD format |
+| `--job_type` | Override job type pattern for specific version |
+| `--days_back` | Days to search back (default: 30) |
+| `--list-data-days` | List available data days and counts |
+| `-v, --verbose` | Enable verbose logging |
+| `-d, --debug` | Enable debug logging |
+
+**Output CSV Format:**
+```
+# Summary Statistics
+pge_type,job_type,data_day,instance_type,count,avg_pge_time_min,...
+
+# Individual Job Details
+job_id,match_id,data_day,instance_type,pge_execution_time_min,pcm_container_time_min
+```
+
+**Credential Handling:**
+- Environment variables: `ES_USERNAME`, `ES_PASSWORD`
+- System keychain (requires `keyring` package)
+- Interactive prompt (cached to keychain if available)
+
+---
+
+### 2. PGE Version Comparison
+
+Compares execution times between two PGE versions and produces an Excel report.
+
+**Features:**
+- Matches jobs by product timestamps (match_id)
+- Calculates performance differences and percentage changes
+- Generates Excel workbook with multiple sheets:
+  - Summary: Overall statistics and breakdown by instance type
+  - Matched Comparison: Side-by-side comparison of matched jobs
+  - Raw Data - Old: All jobs from baseline version
+  - Raw Data - New: All jobs from new version
+  - Chart: Bar chart comparing average execution times
+
+**Usage:**
+```bash
+# Compare two versions
+python compare_pge_versions.py \
+  --old_csv=RSLC_execution_times_2025-11-10_venue1.csv \
+  --new_csv=RSLC_execution_times_2025-11-10_venue2.csv \
+  --output=RSLC_comparison.xlsx
+
+# With custom version labels
+python compare_pge_versions.py \
+  --old_csv=old.csv \
+  --new_csv=new.csv \
+  --old_version="r05.00.0" \
+  --new_version="r05.00.5.1" \
+  --output=comparison.xlsx
+```
+
+**Arguments:**
+| Argument | Description |
+|----------|-------------|
+| `--old_csv` | CSV file for baseline version (required) |
+| `--new_csv` | CSV file for new version (required) |
+| `--output` | Output Excel file (default: pge_comparison.xlsx) |
+| `--old_version` | Label for old version (auto-detected if not specified) |
+| `--new_version` | Label for new version (auto-detected if not specified) |
+
+---
+
+### 3. Enhanced Metrics Extractor (Hierarchical Breakdown)
+
+Extends the base metrics extractor with NISAR-specific hierarchical breakdown by beam modes.
+
+**Usage:**
+```bash
 python hysds_metrics_es_extractor_enhanced.py \
-  -u https://your-es-instance/mozart_es/logstash-*/_search \
+  -u https://venue/mozart_es/logstash-*/_search \
   -b 56 \
   --breakdown_job "job-SCIFLO_RSLC:pcm_r4.0.7_pge_r4.1.0" \
   --nisar_config NISAR_MIXED_MODES_CONFIG_20200101T000000_01.json
 ```
 
-#### 2. Execution Time Extractor
+See [README_ENHANCED.md](README_ENHANCED.md) for detailed documentation.
+
+---
+
+### 4. Legacy Job Execution Time Extractor
+
+Original RSLC-specific execution time analyzer with beam mode breakdown.
+
+**Usage:**
 ```bash
-cd /path/to/metrics_extractor/nisar
 python job_execution_time_extractor.py \
-  -u https://your-es-instance/mozart_es/logstash-*/_search \
+  -u https://venue/mozart_es/logstash-*/_search \
   -b 56 \
   --breakdown_job "job-SCIFLO_RSLC:pcm_r4.0.7_pge_r4.1.0"
 ```
 
-## 📊 Output Files
+---
 
-### Enhanced Metrics Extractor Output
-- **Filename**: `job_three_level_breakdown_job_SCIFLO_RSLC_pcm_r4.0.7_pge_r4.1.0_[hostname]_[timestamp]_spanning_[days]_days.csv`
-- **Columns**: `job_type`, `instance_type`, `beam_name`, `coverage`, `acquisition_mode`, `job_runtime_m`, `container_runtime_m`, `stage_in_size_gb`, `stage_out_size_gb`, `stage_in_rate_mbps`, `stage_out_rate_mbps`, `count`, `daily_count_avg`, `duration_days`
+## Workflow Example
 
-### Execution Time Extractor Output
-- **Filename**: `job_execution_times_job_SCIFLO_RSLC_pcm_r4.0.7_pge_r4.1.0_[hostname]_[timestamp]_spanning_[days]_days.csv`
-- **Columns**: `job_type`, `instance_type`, `beam_name`, `coverage`, `acquisition_mode`, `avg_execution_time_minutes`, `min_execution_time_minutes`, `max_execution_time_minutes`, `avg_pcm_container_runtime_m`, `min_pcm_container_runtime_m`, `max_pcm_container_runtime_m`, `count`, `wall_times_processed`, `total_jobs`, `daily_count_avg`, `duration_days`
+Extract and compare PGE performance between two venues/versions:
 
-## 🔧 Key Features
+```bash
+# 1. Extract metrics for old version
+python pge_execution_time_extractor.py \
+  --pge_type=RSLC \
+  --data_day=2025-11-10 \
+  --job_type="job-SCIFLO_RSLC:release-r05.00.0" \
+  --es_url="https://venue1/mozart_es/logstash-*/_search"
 
-### Regex Pattern Matching
-Uses the pattern: `_(?P<coverage>full|partial)_(?P<acquisition_mode>individual|mixed)_(?P<beam_name>L_\d{2}_\w{2}_\d{2}_\w{2})_`
+# 2. Extract metrics for new version
+python pge_execution_time_extractor.py \
+  --pge_type=RSLC \
+  --data_day=2025-11-10 \
+  --job_type="job-SCIFLO_RSLC:pcm_r05.00.1_pge_r05.00.5.1" \
+  --es_url="https://venue2/mozart_es/logstash-*/_search"
 
-### Wall Time Processing
-- Extracts wall_time values from `job.job_info.metrics.usage_stats`
-- Uses **lesser value** for execution time analysis
-- Uses **larger value** for PCM container runtime analysis
-- Converts nanoseconds to minutes for readability
-
-### NISAR Beam Mode Support
-- Loads beam modes from `NISAR_MIXED_MODES_CONFIG_20200101T000000_01.json`
-- Supports patterns matching `[LS]_\d{2}_\w{2}_\d{2}_\w{2}`
-
-## 📈 Analysis Capabilities
-
-### Hierarchical Breakdown Analysis
-- **Beam Mode Performance**: Compare performance across different NISAR beam modes
-- **Coverage Analysis**: Analyze full vs partial coverage performance
-- **Acquisition Mode Comparison**: Compare individual vs mixed acquisition modes
-- **Instance Type Scaling**: Analyze performance across different EC2 instance types
-
-### Execution Time Analysis
-- **Actual Job Execution**: Uses minimum wall_time (actual processing time)
-- **Container Overhead**: Uses maximum wall_time (total container runtime)
-- **Performance Metrics**: Average, minimum, maximum execution times
-- **Statistical Analysis**: Job counts, processing rates, daily averages
-
-## 🔄 Adapting for Other Projects
-
-To adapt these scripts for other projects:
-
-1. **Update Regex Patterns**: Modify the regex in `parse_job_id_patterns()` to match your job ID structure
-2. **Create Configuration File**: Create a project-specific configuration file similar to `NISAR_MIXED_MODES_CONFIG_20200101T000000_01.json`
-3. **Update Job Type**: Change the job type filter from `SCIFLO_RSLC` to your project's job type
-4. **Modify Breakdown Logic**: Update the hierarchical breakdown to match your project's needs
-
-### Example Adaptation Structure
-```
-your_project/
-├── README.md
-├── your_project_config.json
-├── hysds_metrics_es_extractor_enhanced.py  # Adapted version
-└── job_execution_time_extractor.py         # Adapted version
+# 3. Compare the two versions
+python compare_pge_versions.py \
+  --old_csv=RSLC_execution_times_2025-11-10_venue1.csv \
+  --new_csv=RSLC_execution_times_2025-11-10_venue2.csv \
+  --output=RSLC_comparison.xlsx
 ```
 
-## 📚 Documentation
+## Job Matching
 
-- **README_ENHANCED.md**: Detailed technical documentation
-- **Base Script**: `../metrics_extractor/hysds_metrics_es_extractor.py`
+Jobs are matched between versions using the `match_id` field, which contains all product timestamps:
 
-## 🤝 Contributing
+| PGE Type | match_id Format | Example |
+|----------|-----------------|---------|
+| L0B | start_end | `20251110T041507_20251110T042725` |
+| RSLC | start_end | `20251110T120000_20251110T120500` |
+| GSLC | start_end | `20251110T120000_20251110T120500` |
+| GCOV | start_end | `20251110T120000_20251110T120500` |
+| L3_SM | start_end | `20251110T120000_20251110T120500` |
+| INSAR | ref_start_ref_end_sec_start_sec_end | `20251108T120000_20251108T120500_20251110T120000_20251110T120500` |
 
-When adapting these scripts for new projects:
-1. Create a new project directory
-2. Copy and modify the enhanced scripts
-3. Update configuration files and regex patterns
-4. Document project-specific requirements
-5. Test with your project's data
+## Prerequisites
 
-## 📞 Support
+- Python 3.8+
+- Access to Elasticsearch endpoint with HySDS metrics
+- Required packages: `requests`, `openpyxl` (for Excel output), `keyring` (optional, for credential caching)
 
-For questions about NISAR-specific adaptations, refer to:
-- This README for basic usage
-- README_ENHANCED.md for technical details
-- Base script documentation for core functionality
+## Support
+
+For questions about NISAR-specific tools, refer to:
+- This README for usage instructions
+- [README_ENHANCED.md](README_ENHANCED.md) for hierarchical breakdown details
+- Base script documentation in parent directory
