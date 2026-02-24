@@ -45,6 +45,7 @@ from hysds_metrics_es_extractor import (
     get_counts_by_job_name,
     export_job_counts_to_csv,
 )
+from es_pagination import search_after_scan
 
 
 def get_sample_job_ids(session, api_url, time_start, time_end, job_type, limit=100):
@@ -65,7 +66,6 @@ def get_sample_job_ids(session, api_url, time_start, time_end, job_type, limit=1
         "query": {
             "bool": {
                 "must": [
-                    {"match_all": {}},
                     {
                         "query_string": {
                             "query": "type.keyword:job_info",
@@ -87,8 +87,6 @@ def get_sample_job_ids(session, api_url, time_start, time_end, job_type, limit=1
                         }
                     },
                 ],
-                "should": [],
-                "must_not": [],
             }
         },
     }
@@ -213,12 +211,10 @@ def get_job_id_breakdown_aggregation(
 
     # First get all job_ids for this job_type/instance_type combination
     query = {
-        "size": 10000,  # Get all job_ids
         "_source": ["job.job_id"],
         "query": {
             "bool": {
                 "must": [
-                    {"match_all": {}},
                     {
                         "query_string": {
                             "query": "type.keyword:job_info",
@@ -245,28 +241,16 @@ def get_job_id_breakdown_aggregation(
                         }
                     },
                 ],
-                "should": [],
-                "must_not": [],
             }
         },
     }
 
-    headers = {"Content-Type": "application/json"}
-    payload = json.dumps(query)
-
-    response = session.post(api_url, data=payload, headers=headers, verify=False)
-
-    if response.status_code != 200:
-        raise Exception(
-            f"got response code {response.status_code} due to {response.reason}"
-        )
-
-    result = response.json()
+    all_hits = search_after_scan(session, api_url, query)
 
     # Group job_ids by breakdown value
     breakdown_groups = {}
 
-    for hit in result.get("hits", {}).get("hits", []):
+    for hit in all_hits:
         job_id = hit.get("_source", {}).get("job", {}).get("job_id")
         if job_id:
             match = re.search(breakdown_pattern, job_id)
@@ -436,12 +420,10 @@ def get_hierarchical_job_breakdown_aggregation(
 
     # First get all job_ids for this job_type/instance_type combination
     query = {
-        "size": 10000,  # Get all job_ids
         "_source": ["job.job_id"],
         "query": {
             "bool": {
                 "must": [
-                    {"match_all": {}},
                     {
                         "query_string": {
                             "query": "type.keyword:job_info",
@@ -468,28 +450,16 @@ def get_hierarchical_job_breakdown_aggregation(
                         }
                     },
                 ],
-                "should": [],
-                "must_not": [],
             }
         },
     }
 
-    headers = {"Content-Type": "application/json"}
-    payload = json.dumps(query)
-
-    response = session.post(api_url, data=payload, headers=headers, verify=False)
-
-    if response.status_code != 200:
-        raise Exception(
-            f"got response code {response.status_code} due to {response.reason}"
-        )
-
-    result = response.json()
+    all_hits = search_after_scan(session, api_url, query)
 
     # Group job_ids by hierarchical breakdown: NISAR mode -> processing type
     hierarchical_groups = {}
 
-    for hit in result.get("hits", {}).get("hits", []):
+    for hit in all_hits:
         job_id = hit.get("_source", {}).get("job", {}).get("job_id")
         if job_id:
             # Extract NISAR mode (primary)
@@ -676,12 +646,10 @@ def get_three_level_hierarchical_breakdown(
 
     # First get all job_ids for this job_type/instance_type combination
     query = {
-        "size": 10000,  # Get all job_ids
         "_source": ["job.job_id"],
         "query": {
             "bool": {
                 "must": [
-                    {"match_all": {}},
                     {
                         "query_string": {
                             "query": "type.keyword:job_info",
@@ -708,28 +676,16 @@ def get_three_level_hierarchical_breakdown(
                         }
                     },
                 ],
-                "should": [],
-                "must_not": [],
             }
         },
     }
 
-    headers = {"Content-Type": "application/json"}
-    payload = json.dumps(query)
-
-    response = session.post(api_url, data=payload, headers=headers, verify=False)
-
-    if response.status_code != 200:
-        raise Exception(
-            f"got response code {response.status_code} due to {response.reason}"
-        )
-
-    result = response.json()
+    all_hits = search_after_scan(session, api_url, query)
 
     # Group job_ids by three-level hierarchical breakdown: beam_name -> coverage -> acquisition_mode
     hierarchical_groups = {}
 
-    for hit in result.get("hits", {}).get("hits", []):
+    for hit in all_hits:
         job_id = hit.get("_source", {}).get("job", {}).get("job_id")
         if job_id:
             # Extract beam_name, coverage, and acquisition_mode using the regex

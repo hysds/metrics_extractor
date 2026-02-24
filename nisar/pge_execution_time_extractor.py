@@ -25,6 +25,8 @@ from urllib.parse import urlsplit
 
 import requests
 
+from es_pagination import search_after_scan
+
 try:
     import keyring
     KEYRING_AVAILABLE = True
@@ -162,7 +164,6 @@ def query_jobs(session, es_url, job_type, time_start, time_end):
         job_filter = {"match_phrase": {"job_type.keyword": job_type}}
 
     query = {
-        "size": 10000,
         "_source": [
             "job.job_id",
             "job.job_info.metrics.usage_stats.wall_time",
@@ -183,17 +184,7 @@ def query_jobs(session, es_url, job_type, time_start, time_end):
         },
     }
 
-    response = session.post(
-        es_url,
-        data=json.dumps(query),
-        headers={"Content-Type": "application/json"},
-        verify=False,
-    )
-
-    if response.status_code != 200:
-        raise Exception(f"ES query failed: {response.status_code} {response.reason}")
-
-    return response.json().get("hits", {}).get("hits", [])
+    return search_after_scan(session, es_url, query)
 
 
 def process_jobs(hits, pge_config, target_data_day=None):

@@ -30,6 +30,7 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'metrics_extractor'))
 
 from hysds_metrics_es_extractor import get_instance_types_by_job_type
+from es_pagination import search_after_scan
 
 
 def get_sample_job_ids(session, api_url, time_start, time_end, job_type, limit=100):
@@ -50,7 +51,6 @@ def get_sample_job_ids(session, api_url, time_start, time_end, job_type, limit=1
         "query": {
             "bool": {
                 "must": [
-                    {"match_all": {}},
                     {
                         "query_string": {
                             "query": "type.keyword:job_info",
@@ -72,8 +72,6 @@ def get_sample_job_ids(session, api_url, time_start, time_end, job_type, limit=1
                         }
                     },
                 ],
-                "should": [],
-                "must_not": [],
             }
         },
     }
@@ -162,12 +160,10 @@ def get_job_execution_times(
 
     # First get all job_ids for this job_type/instance_type combination
     query = {
-        "size": 10000,  # Get all job_ids
         "_source": ["job.job_id"],
         "query": {
             "bool": {
                 "must": [
-                    {"match_all": {}},
                     {
                         "query_string": {
                             "query": "type.keyword:job_info",
@@ -194,28 +190,16 @@ def get_job_execution_times(
                         }
                     },
                 ],
-                "should": [],
-                "must_not": [],
             }
         },
     }
 
-    headers = {"Content-Type": "application/json"}
-    payload = json.dumps(query)
-
-    response = session.post(api_url, data=payload, headers=headers, verify=False)
-
-    if response.status_code != 200:
-        raise Exception(
-            f"got response code {response.status_code} due to {response.reason}"
-        )
-
-    result = response.json()
+    hits = search_after_scan(session, api_url, query)
 
     # Group job_ids by three-level hierarchical breakdown: beam_name -> coverage -> acquisition_mode
     hierarchical_groups = {}
 
-    for hit in result.get("hits", {}).get("hits", []):
+    for hit in hits:
         job_id = hit.get("_source", {}).get("job", {}).get("job_id")
         if job_id:
             # Extract beam_name, coverage, and acquisition_mode using the regex
@@ -261,7 +245,6 @@ def get_job_execution_times(
 
                 # Get wall_time values using a query that filters by job_id
                 job_id_query = {
-                    "size": len(job_ids),  # Get all jobs for this group
                     "_source": [
                         "job.job_id",
                         "job.job_info.metrics.usage_stats.wall_time",
@@ -269,7 +252,6 @@ def get_job_execution_times(
                     "query": {
                         "bool": {
                             "must": [
-                                {"match_all": {}},
                                 {
                                     "query_string": {
                                         "query": "type.keyword:job_info",
@@ -297,27 +279,17 @@ def get_job_execution_times(
                                 },
                                 {"terms": {"job.job_id.keyword": job_ids}},
                             ],
-                            "should": [],
-                            "must_not": [],
                         }
                     },
                 }
 
-                headers = {"Content-Type": "application/json"}
-                payload = json.dumps(job_id_query)
-
-                response = session.post(
-                    api_url, data=payload, headers=headers, verify=False
-                )
-
-                if response.status_code != 200:
+                try:
+                    hits = search_after_scan(session, api_url, job_id_query)
+                except Exception as e:
                     logging.warning(
-                        f"Failed to get execution times for {beam_name} -> {coverage} -> {acquisition_mode}: {response.status_code}"
+                        f"Failed to get execution times for {beam_name} -> {coverage} -> {acquisition_mode}: {e}"
                     )
                     continue
-
-                result = response.json()
-                hits = result.get("hits", {}).get("hits", [])
 
                 # Debug: Print the structure of the first hit to understand the data format
                 if hits:
