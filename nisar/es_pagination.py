@@ -1,8 +1,10 @@
 """
-Elasticsearch search_after + PIT (Point In Time) pagination utility.
+Elasticsearch/OpenSearch search_after + PIT (Point In Time) pagination utility.
 
 Provides reliable pagination beyond the 10,000-hit default limit by using
 the search_after API with a Point In Time snapshot for consistent results.
+
+Supports both Elasticsearch and OpenSearch PIT APIs (auto-detected).
 """
 
 import copy
@@ -34,16 +36,82 @@ def parse_es_search_url(search_url):
     return base_url, index
 
 
+def _open_pit(session, base_url, index, headers):
+    """Open a PIT, trying Elasticsearch API first then OpenSearch.
+
+    Returns (pit_id, backend) where backend is 'es' or 'opensearch'.
+    """
+    # Try Elasticsearch: POST /{index}/_pit?keep_alive=1m
+    pit_response = session.post(
+        f"{base_url}/{index}/_pit?keep_alive=1m",
+        headers=headers,
+        verify=False,
+    )
+    if pit_response.status_code == 200:
+        pit_id = pit_response.json()["id"]
+        logging.info(f"Opened PIT (Elasticsearch): {pit_id[:40]}...")
+        return pit_id, "es"
+
+    logging.debug(
+        f"ES PIT failed ({pit_response.status_code}), trying OpenSearch API"
+    )
+
+    # Try OpenSearch: POST /_search/point_in_time
+    pit_response = session.post(
+        f"{base_url}/_search/point_in_time",
+        data=json.dumps({"index": index, "keep_alive": "1m"}),
+        headers=headers,
+        verify=False,
+    )
+    if pit_response.status_code == 200:
+        pit_id = pit_response.json()["pit_id"]
+        logging.info(f"Opened PIT (OpenSearch): {pit_id[:40]}...")
+        return pit_id, "opensearch"
+
+    raise Exception(
+        f"Failed to open PIT on both ES and OpenSearch APIs: "
+        f"{pit_response.status_code} {pit_response.reason}"
+    )
+
+
+def _close_pit(session, base_url, pit_id, backend, headers):
+    """Close a PIT using the appropriate API for the backend."""
+    try:
+        if backend == "opensearch":
+            close_response = session.delete(
+                f"{base_url}/_search/point_in_time",
+                data=json.dumps({"pit_id": [pit_id]}),
+                headers=headers,
+                verify=False,
+            )
+        else:
+            close_response = session.delete(
+                f"{base_url}/_pit",
+                data=json.dumps({"id": pit_id}),
+                headers=headers,
+                verify=False,
+            )
+        if close_response.status_code == 200:
+            logging.info("Closed PIT successfully")
+        else:
+            logging.warning(
+                f"Failed to close PIT: {close_response.status_code} {close_response.reason}"
+            )
+    except Exception as e:
+        logging.warning(f"Error closing PIT: {e}")
+
+
 def search_after_scan(session, api_url, query, page_size=10000):
     """
-    Paginate through all Elasticsearch results using search_after + PIT.
+    Paginate through all results using search_after + PIT.
 
-    Deep-copies the query to avoid mutation. Opens a PIT, pages through
-    all results using search_after, and closes the PIT in a finally block.
+    Supports both Elasticsearch and OpenSearch. Deep-copies the query to
+    avoid mutation. Opens a PIT, pages through all results using
+    search_after, and closes the PIT in a finally block.
 
     @param session: requests.Session with auth configured
-    @param api_url: full ES search URL (e.g. https://host/mozart_es/logstash-*/_search)
-    @param query: the ES query dict (will not be mutated)
+    @param api_url: full search URL (e.g. https://host/mozart_es/logstash-*/_search)
+    @param query: the query dict (will not be mutated)
     @param page_size: number of hits per page (default 10000)
     @return: flat list of all hit dicts
     """
@@ -51,19 +119,7 @@ def search_after_scan(session, api_url, query, page_size=10000):
     base_url, index = parse_es_search_url(api_url)
     headers = {"Content-Type": "application/json"}
 
-    # Open PIT
-    pit_response = session.post(
-        f"{base_url}/{index}/_pit?keep_alive=1m",
-        headers=headers,
-        verify=False,
-    )
-    if pit_response.status_code != 200:
-        raise Exception(
-            f"Failed to open PIT: {pit_response.status_code} {pit_response.reason}"
-        )
-
-    pit_id = pit_response.json()["id"]
-    logging.info(f"Opened PIT: {pit_id[:40]}...")
+    pit_id, backend = _open_pit(session, base_url, index, headers)
 
     try:
         # Add PIT to query
@@ -88,7 +144,7 @@ def search_after_scan(session, api_url, query, page_size=10000):
 
             if response.status_code != 200:
                 raise Exception(
-                    f"ES query failed: {response.status_code} {response.reason}"
+                    f"Search query failed: {response.status_code} {response.reason}"
                 )
 
             result = response.json()
@@ -104,22 +160,7 @@ def search_after_scan(session, api_url, query, page_size=10000):
             query["search_after"] = hits[-1]["sort"]
 
     finally:
-        # Close PIT
-        try:
-            close_response = session.delete(
-                f"{base_url}/_pit",
-                data=json.dumps({"id": pit_id}),
-                headers=headers,
-                verify=False,
-            )
-            if close_response.status_code == 200:
-                logging.info("Closed PIT successfully")
-            else:
-                logging.warning(
-                    f"Failed to close PIT: {close_response.status_code} {close_response.reason}"
-                )
-        except Exception as e:
-            logging.warning(f"Error closing PIT: {e}")
+        _close_pit(session, base_url, pit_id, backend, headers)
 
     logging.info(f"Total hits fetched: {len(all_hits)}")
     return all_hits

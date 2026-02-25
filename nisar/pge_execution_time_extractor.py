@@ -21,7 +21,7 @@ import os
 import re
 import sys
 from argparse import ArgumentParser
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
 import requests
@@ -432,7 +432,7 @@ def main():
                 logging.warning("No NISAR_MIXED_MODES_CONFIG file found; RCID/mode fields will be empty")
 
     # Time range
-    dt_end = datetime.utcnow()
+    dt_end = datetime.now(timezone.utc)
     dt_start = dt_end - timedelta(days=args.days_back)
     time_start = dt_start.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     time_end = dt_end.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
