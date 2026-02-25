@@ -251,6 +251,10 @@ def process_jobs(hits, pge_config, target_data_day=None, pge_type=None, modes_co
         product_id = get_product_id(hit)
         hit_job_type = hit.get("_source", {}).get("job_type", "")
 
+        # Skip L0B CRSD products (dtid jobs) — only process RRSD
+        if is_l0b and "RRSD" not in product_id:
+            continue
+
         timestamps = extract_timestamps(product_id, pattern, ts_count)
         if not timestamps:
             continue
