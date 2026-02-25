@@ -292,6 +292,7 @@ def process_jobs(hits, pge_config, target_data_day=None, pge_type=None, modes_co
 
         results.append({
             "job_id": job_id,
+            "product_id": product_id,
             "match_id": get_match_id(timestamps),
             "data_day": data_day,
             "instance_type": source.get("job_info", {}).get("facts", {}).get("ec2_instance_type", "unknown"),
@@ -375,13 +376,13 @@ def export_csv(results, stats, pge_type, job_type, data_day, filepath):
         writer.writerow([])
         writer.writerow(["# Individual Job Details"])
         writer.writerow([
-            "job_id", "match_id", "data_day", "instance_type",
+            "job_id", "product_id", "match_id", "data_day", "instance_type",
             "version", "rcid", "diagnostic_mode_flag", "beam_mode",
             "pge_execution_time_min", "pcm_container_time_min"
         ])
         for r in results:
             writer.writerow([
-                r["job_id"], r["match_id"], r["data_day"],
+                r["job_id"], r.get("product_id", ""), r["match_id"], r["data_day"],
                 r["instance_type"],
                 _fmt(r.get("version")), _fmt(r.get("rcid")),
                 _fmt(r.get("diagnostic_mode_flag")), _fmt(r.get("beam_mode")),
