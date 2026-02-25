@@ -14,13 +14,14 @@ Usage:
 
 import csv
 import getpass
+import glob as glob_mod
 import json
 import logging
 import os
 import re
 import sys
 from argparse import ArgumentParser
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
 import requests
@@ -44,6 +45,7 @@ PGE_CONFIGS = {
         'product_id_pattern': r'_(\d{8}T\d{6})_(\d{8}T\d{6})_',
         'timestamp_index': 0,
         'timestamp_count': 2,
+        'rcid_pattern': r'_(\d+)S_\d{8}T\d{6}_',
     },
     'RSLC': {
         'job_type_pattern': 'job-SCIFLO_RSLC*',
@@ -156,6 +158,50 @@ def get_match_id(timestamps):
     return None
 
 
+def extract_rcid(product_id, pattern):
+    """Extract RCID (radar config ID) from product ID."""
+    match = re.search(pattern, product_id)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def load_modes_config(config_path):
+    """Load NISAR mixed modes config JSON. Returns dict mapping RCID str → mode list."""
+    with open(config_path) as f:
+        return json.load(f)
+
+
+def get_diagnostic_mode_flag(rcid, modes_config):
+    """Derive diagnostic mode flag from RCID using modes config.
+
+    Returns 1 (DM1), 2 (DM2), 'cal', or 0 (science).
+    """
+    if rcid is None or modes_config is None:
+        return None
+    modes = modes_config.get(str(rcid))
+    if not modes:
+        return None
+    first = modes[0]
+    if first == "DM1":
+        return 1
+    elif first == "DM2":
+        return 2
+    elif first == "cal":
+        return "cal"
+    return 0
+
+
+def extract_version(job_type):
+    """Extract version string from job_type field.
+
+    e.g. 'job-SCIFLO_L0B:pcm_r05.00.1_pge_r05.00.5.1' → 'pcm_r05.00.1_pge_r05.00.5.1'
+    """
+    if job_type and ":" in job_type:
+        return job_type.split(":", 1)[1]
+    return "unknown"
+
+
 def query_jobs(session, es_url, job_type, time_start, time_end):
     """Query Elasticsearch for jobs."""
     if "*" in job_type:
@@ -169,6 +215,7 @@ def query_jobs(session, es_url, job_type, time_start, time_end):
             "job.job_info.metrics.usage_stats.wall_time",
             "job.job_info.metrics.products_staged",
             "job.job_info.facts.ec2_instance_type",
+            "job_type",
         ],
         "query": {
             "bool": {
@@ -187,11 +234,13 @@ def query_jobs(session, es_url, job_type, time_start, time_end):
     return search_after_scan(session, es_url, query)
 
 
-def process_jobs(hits, pge_config, target_data_day=None):
+def process_jobs(hits, pge_config, target_data_day=None, pge_type=None, modes_config=None):
     """Process job hits and extract execution times."""
     pattern = pge_config['product_id_pattern']
     ts_index = pge_config['timestamp_index']
     ts_count = pge_config['timestamp_count']
+    rcid_pattern = pge_config.get('rcid_pattern')
+    is_l0b = pge_type == 'L0B'
 
     results = []
     data_day_counts = {}
@@ -200,6 +249,11 @@ def process_jobs(hits, pge_config, target_data_day=None):
         source = hit.get("_source", {}).get("job", {})
         job_id = source.get("job_id", "")
         product_id = get_product_id(hit)
+        hit_job_type = hit.get("_source", {}).get("job_type", "")
+
+        # Skip L0B CRSD products (dtid jobs) — only process RRSD
+        if is_l0b and "RRSD" not in product_id:
+            continue
 
         timestamps = extract_timestamps(product_id, pattern, ts_count)
         if not timestamps:
@@ -226,32 +280,56 @@ def process_jobs(hits, pge_config, target_data_day=None):
         pge_time = min(wall_times[0], wall_times[1]) / (1e9 * 60)  # nanoseconds to minutes
         pcm_time = max(wall_times[0], wall_times[1]) / (1e9 * 60)
 
+        # L0B-specific fields
+        rcid = None
+        diagnostic_mode_flag = None
+        beam_mode = None
+        version = None
+        if is_l0b:
+            rcid = extract_rcid(product_id, rcid_pattern)
+            diagnostic_mode_flag = get_diagnostic_mode_flag(rcid, modes_config)
+            if rcid is not None and modes_config is not None:
+                modes = modes_config.get(str(rcid))
+                if modes:
+                    beam_mode = modes[0]
+            version = extract_version(hit_job_type)
+
         results.append({
             "job_id": job_id,
+            "product_id": product_id,
             "match_id": get_match_id(timestamps),
             "data_day": data_day,
             "instance_type": source.get("job_info", {}).get("facts", {}).get("ec2_instance_type", "unknown"),
             "pge_execution_time": pge_time,
             "pcm_container_time": pcm_time,
+            "rcid": rcid,
+            "diagnostic_mode_flag": diagnostic_mode_flag,
+            "beam_mode": beam_mode,
+            "version": version,
         })
 
     return results, data_day_counts
 
 
-def calculate_stats(results):
-    """Calculate statistics grouped by instance type."""
-    by_instance = {}
+def calculate_stats(results, pge_type=None):
+    """Calculate statistics grouped by instance type (and version/RCID for L0B)."""
+    is_l0b = pge_type == 'L0B'
+    by_group = {}
     for r in results:
-        inst = r["instance_type"]
-        if inst not in by_instance:
-            by_instance[inst] = []
-        by_instance[inst].append(r)
+        if is_l0b:
+            key = (r.get("version"), r["instance_type"], r.get("rcid"), r.get("diagnostic_mode_flag"))
+        else:
+            key = (None, r["instance_type"], None, None)
+        if key not in by_group:
+            by_group[key] = []
+        by_group[key].append(r)
 
     stats = {}
-    for inst, jobs in by_instance.items():
+    for key, jobs in by_group.items():
         pge_times = [j["pge_execution_time"] for j in jobs]
         pcm_times = [j["pcm_container_time"] for j in jobs]
-        stats[inst] = {
+        version, inst, rcid, diag_flag = key
+        entry = {
             "count": len(jobs),
             "avg_pge_time": sum(pge_times) / len(pge_times),
             "min_pge_time": min(pge_times),
@@ -259,8 +337,19 @@ def calculate_stats(results):
             "avg_pcm_time": sum(pcm_times) / len(pcm_times),
             "min_pcm_time": min(pcm_times),
             "max_pcm_time": max(pcm_times),
+            "instance_type": inst,
+            "version": version,
+            "rcid": rcid,
+            "diagnostic_mode_flag": diag_flag,
+            "beam_mode": jobs[0].get("beam_mode"),
         }
+        stats[key] = entry
     return stats
+
+
+def _fmt(val):
+    """Format a value for CSV: None → empty string."""
+    return "" if val is None else val
 
 
 def export_csv(results, stats, pge_type, job_type, data_day, filepath):
@@ -271,13 +360,18 @@ def export_csv(results, stats, pge_type, job_type, data_day, filepath):
         # Summary section
         writer.writerow(["# Summary Statistics"])
         writer.writerow([
-            "pge_type", "job_type", "data_day", "instance_type", "count",
+            "pge_type", "job_type", "data_day", "instance_type",
+            "version", "rcid", "diagnostic_mode_flag", "beam_mode",
+            "count",
             "avg_pge_time_min", "min_pge_time_min", "max_pge_time_min",
             "avg_pcm_time_min", "min_pcm_time_min", "max_pcm_time_min"
         ])
-        for inst, s in stats.items():
+        for key, s in stats.items():
             writer.writerow([
-                pge_type, job_type, data_day, inst, s["count"],
+                pge_type, job_type, data_day, s["instance_type"],
+                _fmt(s.get("version")), _fmt(s.get("rcid")),
+                _fmt(s.get("diagnostic_mode_flag")), _fmt(s.get("beam_mode")),
+                s["count"],
                 s["avg_pge_time"], s["min_pge_time"], s["max_pge_time"],
                 s["avg_pcm_time"], s["min_pcm_time"], s["max_pcm_time"]
             ])
@@ -285,11 +379,18 @@ def export_csv(results, stats, pge_type, job_type, data_day, filepath):
         # Details section
         writer.writerow([])
         writer.writerow(["# Individual Job Details"])
-        writer.writerow(["job_id", "match_id", "data_day", "instance_type", "pge_execution_time_min", "pcm_container_time_min"])
+        writer.writerow([
+            "job_id", "product_id", "match_id", "data_day", "instance_type",
+            "version", "rcid", "diagnostic_mode_flag", "beam_mode",
+            "pge_execution_time_min", "pcm_container_time_min"
+        ])
         for r in results:
             writer.writerow([
-                r["job_id"], r["match_id"], r["data_day"],
-                r["instance_type"], r["pge_execution_time"], r["pcm_container_time"]
+                r["job_id"], r.get("product_id", ""), r["match_id"], r["data_day"],
+                r["instance_type"],
+                _fmt(r.get("version")), _fmt(r.get("rcid")),
+                _fmt(r.get("diagnostic_mode_flag")), _fmt(r.get("beam_mode")),
+                r["pge_execution_time"], r["pcm_container_time"]
             ])
 
     logging.info(f"Exported to {filepath}")
@@ -305,6 +406,7 @@ def main():
     parser.add_argument("--job_type", help="Override job type pattern")
     parser.add_argument("--days_back", type=int, default=30, help="Days to search back")
     parser.add_argument("--list-data-days", action="store_true", help="List available data days")
+    parser.add_argument("--modes_config", help="Path to NISAR_MIXED_MODES_CONFIG JSON (auto-detected if not specified)")
     args = parser.parse_args()
 
     # Setup logging
@@ -318,8 +420,24 @@ def main():
     pge_config = PGE_CONFIGS[args.pge_type]
     job_type = args.job_type or pge_config['job_type_pattern']
 
+    # Load modes config for L0B
+    modes_config = None
+    if args.pge_type == 'L0B':
+        if args.modes_config:
+            modes_config = load_modes_config(args.modes_config)
+            logging.info(f"Loaded modes config from {args.modes_config}")
+        else:
+            # Auto-detect in same directory as this script
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            candidates = sorted(glob_mod.glob(os.path.join(script_dir, "NISAR_MIXED_MODES_CONFIG_*.json")))
+            if candidates:
+                modes_config = load_modes_config(candidates[-1])
+                logging.info(f"Auto-detected modes config: {candidates[-1]}")
+            else:
+                logging.warning("No NISAR_MIXED_MODES_CONFIG file found; RCID/mode fields will be empty")
+
     # Time range
-    dt_end = datetime.utcnow()
+    dt_end = datetime.now(timezone.utc)
     dt_start = dt_end - timedelta(days=args.days_back)
     time_start = dt_start.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     time_end = dt_end.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -342,7 +460,12 @@ def main():
         sys.exit(0)
 
     # Process jobs
-    results, data_day_counts = process_jobs(hits, pge_config, args.data_day if not args.list_data_days else None)
+    results, data_day_counts = process_jobs(
+        hits, pge_config,
+        target_data_day=args.data_day if not args.list_data_days else None,
+        pge_type=args.pge_type,
+        modes_config=modes_config,
+    )
 
     # List data days mode
     if args.list_data_days:
@@ -360,12 +483,16 @@ def main():
         sys.exit(0)
 
     # Calculate stats and export
-    stats = calculate_stats(results)
+    stats = calculate_stats(results, pge_type=args.pge_type)
 
     print(f"\n{args.pge_type} Execution Time Summary for {args.data_day}")
     print(f"Total jobs: {len(results)}")
-    for inst, s in stats.items():
-        print(f"\n  {inst}: {s['count']} jobs")
+    for key, s in stats.items():
+        label = s["instance_type"]
+        if args.pge_type == 'L0B':
+            parts = [s.get("version", ""), f"RCID={s.get('rcid', '')}", f"DM={s.get('diagnostic_mode_flag', '')}"]
+            label = f"{label} | {' | '.join(parts)}"
+        print(f"\n  {label}: {s['count']} jobs")
         print(f"    PGE Time: avg={s['avg_pge_time']:.2f}, min={s['min_pge_time']:.2f}, max={s['max_pge_time']:.2f} min")
 
     csv_path = f"{args.pge_type}_execution_times_{args.data_day}_{hostname}.csv"
