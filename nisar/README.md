@@ -50,6 +50,19 @@ python pge_execution_time_extractor.py \
   --data_day=2025-11-10 \
   --job_type="job-SCIFLO_RSLC:release-r05.00.0" \
   --es_url="https://venue/mozart_es/logstash-*/_search"
+
+# Extract L0B metrics (auto-detects NISAR_MIXED_MODES_CONFIG in script dir)
+python pge_execution_time_extractor.py \
+  --pge_type=L0B \
+  --data_day=2025-11-10 \
+  --es_url="https://venue/mozart_es/logstash-*/_search"
+
+# Extract L0B metrics with explicit modes config
+python pge_execution_time_extractor.py \
+  --pge_type=L0B \
+  --data_day=2025-11-10 \
+  --modes_config=NISAR_MIXED_MODES_CONFIG_20200101T000000_01.json \
+  --es_url="https://venue/mozart_es/logstash-*/_search"
 ```
 
 **Arguments:**
@@ -60,6 +73,7 @@ python pge_execution_time_extractor.py \
 | `--data_day` | Filter by data day in YYYY-MM-DD format |
 | `--job_type` | Override job type pattern for specific version |
 | `--days_back` | Days to search back (default: 30) |
+| `--modes_config` | Path to NISAR_MIXED_MODES_CONFIG JSON (auto-detected for L0B if not specified) |
 | `--list-data-days` | List available data days and counts |
 | `-v, --verbose` | Enable verbose logging |
 | `-d, --debug` | Enable debug logging |
@@ -67,11 +81,19 @@ python pge_execution_time_extractor.py \
 **Output CSV Format:**
 ```
 # Summary Statistics
-pge_type,job_type,data_day,instance_type,count,avg_pge_time_min,...
+pge_type,job_type,data_day,instance_type,version,rcid,diagnostic_mode_flag,beam_mode,count,avg_pge_time_min,...
 
 # Individual Job Details
-job_id,match_id,data_day,instance_type,pge_execution_time_min,pcm_container_time_min
+job_id,match_id,data_day,instance_type,version,rcid,diagnostic_mode_flag,beam_mode,pge_execution_time_min,pcm_container_time_min
 ```
+
+For L0B jobs, the additional columns are populated:
+- `rcid`: Radar Config ID extracted from the product filename (e.g. `131` from `_131S_`)
+- `diagnostic_mode_flag`: `0` (science), `1` (DM1), `2` (DM2), or `cal`
+- `beam_mode`: Mode string from config (e.g. `L_40_DH_05_DH`)
+- `version`: PCM/PGE version from job_type (e.g. `pcm_r05.00.1_pge_r05.00.5.1`)
+
+For non-L0B PGE types, these columns are present but empty.
 
 **Credential Handling:**
 - Environment variables: `ES_USERNAME`, `ES_PASSWORD`
