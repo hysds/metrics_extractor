@@ -2,6 +2,24 @@
 
 This directory contains NISAR-specific tools for analyzing PGE job performance metrics.
 
+## Quickstart (CRID Report)
+
+For a full CRID metrics report (per-PGE three-level breakdowns + unified CSV + combined Excel workbook), use the orchestrator:
+
+```bash
+# After setting up the SSH tunnel (see § 7):
+./run_crid_report.sh \
+  --crid X05013 \
+  --cluster POP1 \
+  --es_url "https://localhost:9202/logstash-*/_search" \
+  --netrc_os /path/to/netrc-os-<cluster> \
+  --version r05.01.3 \
+  --days_back 200 \
+  --output_dir ./output
+```
+
+See § 7 below for full details.
+
 ## Directory Structure
 
 ```
@@ -9,7 +27,11 @@ nisar/
 ├── README.md                                    # This file
 ├── README_ENHANCED.md                           # Technical documentation for enhanced extractor
 ├── NISAR_MIXED_MODES_CONFIG_20200101T000000_01.json  # NISAR beam mode configurations
-├── hysds_metrics_es_extractor_enhanced.py       # Enhanced metrics extractor with hierarchical breakdown
+├── hysds_metrics_es_extractor_enhanced.py       # Three-level breakdown (RSLC/GSLC/GCOV/INSAR/L3_SM)
+├── l0b_three_level_breakdown.py                 # Three-level breakdown for L0B (rcid/beam/diag)
+├── combine_breakdowns.py                        # Merge per-PGE breakdown CSVs into unified CSV
+├── build_crid_workbook.py                       # Build combined multi-sheet Excel workbook
+├── run_crid_report.sh                           # Orchestrator for full CRID metrics report
 ├── job_execution_time_extractor.py              # Legacy RSLC execution time analyzer
 ├── pge_execution_time_extractor.py              # Multi-PGE execution time extractor
 └── compare_pge_versions.py                      # PGE version comparison tool
@@ -144,24 +166,154 @@ python compare_pge_versions.py \
 
 ---
 
-### 3. Enhanced Metrics Extractor (Hierarchical Breakdown)
+### 3. Enhanced Metrics Extractor (Three-Level Hierarchical Breakdown)
 
-Extends the base metrics extractor with NISAR-specific hierarchical breakdown by beam modes.
+Three-level hierarchical breakdown of PGE jobs by:
+
+1. **beam_name** (e.g., `L_40_DH_05_DH`)
+2. **coverage** (`full` / `partial`)
+3. **acquisition_mode** (`individual` / `mixed`)
+
+Extracts these dimensions from the job_id, then aggregates PGE runtime and stage I/O metrics for each group.
+
+**Supported PGE Types:** RSLC, INSAR, GSLC, GCOV, L3_SM. Their job_ids all carry the `_<coverage>_<acquisition_mode>_<beam_name>_` pattern, so the breakdown regex applies uniformly. For L0B, see § 4 below.
 
 **Usage:**
 ```bash
 python hysds_metrics_es_extractor_enhanced.py \
-  -u https://venue/mozart_es/logstash-*/_search \
-  -b 56 \
-  --breakdown_job "job-SCIFLO_RSLC:pcm_r4.0.7_pge_r4.1.0" \
+  -u https://<cluster>/mozart_es/logstash-*/_search \
+  -b 200 \
+  --breakdown_job "job-SCIFLO_RSLC:release-r05.01.3" \
   --nisar_config NISAR_MIXED_MODES_CONFIG_20200101T000000_01.json
+```
+
+**Output:** `job_three_level_breakdown_<job_type>_<hostname>_<timerange>_spanning_<N>.0_days.csv` with columns:
+
+```
+job_type, instance_type, beam_name, coverage, acquisition_mode,
+job_runtime_m, container_runtime_m,
+stage_in_size_gb, stage_out_size_gb, stage_in_rate_mbps, stage_out_rate_mbps,
+count, daily_count_avg, duration_days
 ```
 
 See [README_ENHANCED.md](README_ENHANCED.md) for detailed documentation.
 
 ---
 
-### 4. Legacy Job Execution Time Extractor
+### 4. L0B Three-Level Breakdown
+
+L0B runs before focusing and its job_id does not contain beam info. This script derives the breakdown from the L0B product filename and maps `rcid` (radar config ID) to a beam mode via the NISAR_MIXED_MODES_CONFIG.
+
+**Breakdown levels:**
+1. **rcid** (integer from L0B product filename, e.g. `156` from `_156S_`)
+2. **beam_mode** (string from config, e.g., `L_40_DH_05_DH`)
+3. **diagnostic_mode** (`science` / `diagnostic` / `cal`)
+
+**Usage:**
+```bash
+ES_USERNAME=hysdsops ES_PASSWORD=<pw> \
+python l0b_three_level_breakdown.py -v \
+  -u https://<cluster>/mozart_es/logstash-*/_search \
+  --job_type "job-SCIFLO_L0B:release-r05.01.3" \
+  -b 200 \
+  --nisar_config NISAR_MIXED_MODES_CONFIG_20200101T000000_01.json
+```
+
+**Output CSV columns:**
+```
+job_type, instance_type, rcid, beam_mode, diagnostic_mode,
+job_runtime_m, container_runtime_m,
+count, daily_count_avg, duration_days
+```
+(Stage I/O metrics are not produced for L0B because the breakdown is product-ID-based.)
+
+---
+
+### 5. Combine Breakdowns (Unified CSV)
+
+Merges per-PGE three-level breakdown CSVs into a single aggregated CSV with a unified schema. The two breakdown conventions (standard vs L0B) are projected onto generic `level_1`/`level_2`/`level_3` columns while preserving the native columns.
+
+**Usage:**
+```bash
+python combine_breakdowns.py \
+  --input_dir ./output \
+  --crid X05013 \
+  --cluster POP1 \
+  --version r05.01.3
+```
+
+Output: `all_pge_three_level_breakdown_<crid>_<cluster>_<date>.csv` with 20 columns including `pge_type`, `level_1/2/3`, native per-convention columns, and all metrics.
+
+---
+
+### 6. Build CRID Workbook (Combined Excel)
+
+Assembles a multi-sheet Excel workbook from the per-PGE CSVs and the unified CSV:
+
+- **Summary** — per-PGE totals, weighted avg container/job runtime, bar chart
+- **All PGEs (unified)** — the aggregated CSV (normalized `level_1/2/3` columns, pivot-ready)
+- **<PGE>** — one sheet per PGE type with its native schema
+
+**Usage:**
+```bash
+python build_crid_workbook.py \
+  --input_dir ./output \
+  --crid X05013 \
+  --cluster POP1 \
+  --version r05.01.3 \
+  --days_back 200
+```
+
+---
+
+### 7. CRID Report Workflow (Orchestrator)
+
+`run_crid_report.sh` chains all of the above into a single command that produces the full deliverable set (per-PGE CSVs, unified CSV, combined Excel workbook) for a given CRID.
+
+**Prerequisites:**
+1. **SSH tunnel** to the cluster's Mozart OpenSearch. The cluster's public HTTPS endpoint goes through a reverse proxy that rotates credentials frequently, so tunneling directly to OpenSearch using an SSH key and the cluster's internal netrc-os credentials is the reliable path. Example:
+
+   ```bash
+   ssh -i <your-pem> -o StrictHostKeyChecking=no -N \
+     -L 9202:es-mozart:9200 hysdsops@<mozart-ec2-ip> &
+   ```
+
+2. **netrc-os credential file** for the cluster (fetched from `~/.netrc-os` on the Mozart host). Single line, format:
+   ```
+   default login hysdsops password <token>
+   ```
+
+**Usage:**
+```bash
+./run_crid_report.sh \
+  --crid X05013 \
+  --cluster POP1 \
+  --es_url "https://localhost:9202/logstash-*/_search" \
+  --netrc_os /path/to/netrc-os-<cluster> \
+  --version r05.01.3 \
+  --days_back 200 \
+  --output_dir ./output
+```
+
+**What it does:**
+1. Reads credentials from `--netrc_os` and exports `ES_USERNAME` / `ES_PASSWORD`
+2. Runs `hysds_metrics_es_extractor_enhanced.py` for RSLC/GSLC/GCOV/INSAR/L3_SM
+3. Runs `l0b_three_level_breakdown.py` for L0B
+4. Runs `combine_breakdowns.py` to aggregate into a unified CSV
+5. Runs `build_crid_workbook.py` to produce the combined Excel workbook
+
+**Job-type suffix:** defaults to `release-<version>`. If a specific PGE has a different suffix (e.g., L3_SM often ships with a `-1` patch suffix), override per-PGE with `--job_suffix_l3_sm "release-r05.01.3-1"` etc.
+
+**Output files** (in `--output_dir`):
+```
+job_three_level_breakdown_<job_type>_<hostname>_*.csv   (6 per-PGE CSVs)
+all_pge_three_level_breakdown_<crid>_<cluster>_<date>.csv
+ALL_PGE_three_level_breakdown_<crid>_<cluster>_<date>.xlsx
+```
+
+---
+
+### 8. Legacy Job Execution Time Extractor
 
 Original RSLC-specific execution time analyzer with beam mode breakdown.
 

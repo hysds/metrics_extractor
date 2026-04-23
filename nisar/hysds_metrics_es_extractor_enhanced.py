@@ -155,7 +155,7 @@ def parse_job_id_patterns(job_ids, job_type, nisar_modes=None):
 
     patterns = {}
 
-    if "SCIFLO_RSLC" in job_type or "SCIFLO_INSAR" in job_type:
+    if any(p in job_type for p in ["SCIFLO_RSLC", "SCIFLO_INSAR", "SCIFLO_GSLC", "SCIFLO_GCOV", "SCIFLO_L3_SM"]):
         # Use the specific regex pattern provided by user
         # Pattern: "_(?P<coverage>full|partial)_(?P<acquisition_mode>individual|mixed)_(?P<beam_name>L_\d{2}_\w{2}_\d{2}_\w{2})_"
         patterns = {
