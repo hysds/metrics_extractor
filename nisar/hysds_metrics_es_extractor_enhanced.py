@@ -186,6 +186,307 @@ def parse_job_id_patterns(job_ids, job_type, nisar_modes=None):
     return patterns, sample_extractions
 
 
+# Job types whose breakdown dimensions live in GRQ product metadata rather
+# than in the job_id string.
+_GRQ_PRODUCT_PGES = ("SCIFLO_RSLC", "SCIFLO_GSLC", "SCIFLO_GCOV", "SCIFLO_INSAR", "SCIFLO_L3_SM")
+# Substrings used to pick the primary staged product out of products_staged
+# (which can also contain BROWSE/metadata/QA entries).
+_PRIMARY_PRODUCT_TOKENS = ("_RSLC_", "_GSLC_", "_GCOV_", "_GUNW_", "_RUNW_", "_RIFG_", "_L3_SM_")
+
+
+def _job_type_uses_grq_breakdown(job_type):
+    return any(p in job_type for p in _GRQ_PRODUCT_PGES)
+
+
+def _pick_primary_product_id(products_staged):
+    """Pick the science product id from a products_staged list."""
+    if not products_staged:
+        return None
+    for p in products_staged:
+        pid = p.get("id")
+        if pid and any(t in pid for t in _PRIMARY_PRODUCT_TOKENS):
+            return pid
+    return products_staged[0].get("id")
+
+
+def fetch_grq_product_metadata(session, grq_url, product_ids):
+    """
+    Bulk-fetch BeamName, FrameCoverage, isJointObservation for a list of product ids from GRQ.
+    @param session: authenticated requests session (GRQ accepts the same creds as metrics ES on NISAR clusters)
+    @param grq_url: GRQ base URL (e.g. https://es-grq:9200) -- no trailing /index/_search
+    @param product_ids: list of product id strings (matches the GRQ doc _id)
+    @return: dict product_id -> {"beam_name","coverage","acquisition_mode"}
+    """
+    out = {}
+    if not product_ids:
+        return out
+    headers = {"Content-Type": "application/json"}
+    url = f"{grq_url.rstrip('/')}/grq_*/_search"
+    batch_size = 500
+    for i in range(0, len(product_ids), batch_size):
+        batch = product_ids[i:i + batch_size]
+        query = {
+            "size": len(batch),
+            "_source": [
+                "id",
+                "metadata.BeamName",
+                "metadata.FrameCoverage",
+                "metadata.isJointObservation",
+            ],
+            "query": {"ids": {"values": batch}},
+        }
+        resp = session.post(url, data=json.dumps(query), headers=headers, verify=False)
+        if resp.status_code != 200:
+            logging.warning(
+                f"GRQ metadata fetch failed: {resp.status_code} {resp.reason}"
+            )
+            continue
+        result = resp.json()
+        for hit in result.get("hits", {}).get("hits", []):
+            src = hit.get("_source", {})
+            md = src.get("metadata", {})
+            pid = src.get("id") or hit.get("_id")
+            beam = md.get("BeamName")
+            cov = md.get("FrameCoverage")
+            joint = str(md.get("isJointObservation", "")).strip().lower()
+            acq = "mixed" if joint in ("true", "1") else "individual"
+            if pid and beam and cov:
+                out[pid] = {
+                    "beam_name": beam,
+                    "coverage": cov,
+                    "acquisition_mode": acq,
+                }
+    logging.info(
+        f"GRQ metadata resolved for {len(out)}/{len(product_ids)} products"
+    )
+    return out
+
+
+def get_three_level_hierarchical_breakdown_via_grq(
+    session, es_url, grq_url, time_start, time_end, job_type, instance_type
+):
+    """
+    Group job_info docs by (BeamName -> FrameCoverage -> isJointObservation) read from GRQ
+    rather than by regex against job_id, then aggregate metrics per group.
+
+    Required because in r05.01.4+ the SCIFLO_RSLC/GSLC/GCOV/INSAR job_ids encode the
+    state-config id (e.g. track_frame_<cycle>_<track>_<frame>_<v>_state-config-<ts>-<ts>)
+    and no longer contain `_full_individual_L_xx_XX_xx_XX_`-style substrings.
+    """
+    query = {
+        "_source": [
+            "job.job_id",
+            "job.job_info.metrics.products_staged.id",
+        ],
+        "query": {
+            "bool": {
+                "must": [
+                    {
+                        "query_string": {
+                            "query": "type.keyword:job_info",
+                            "analyze_wildcard": True,
+                            "time_zone": "America/Los_Angeles",
+                        }
+                    },
+                ],
+                "filter": [
+                    {"match_phrase": {"job_type.keyword": job_type}},
+                    {"match_phrase": {"job.job_info.status": 0}},
+                    {
+                        "match_phrase": {
+                            "job.job_info.facts.ec2_instance_type.keyword": instance_type
+                        }
+                    },
+                    {
+                        "range": {
+                            "@timestamp": {
+                                "gte": time_start,
+                                "lte": time_end,
+                                "format": "strict_date_optional_time",
+                            }
+                        }
+                    },
+                ],
+            }
+        },
+    }
+
+    all_hits = search_after_scan(session, es_url, query)
+
+    # Map job_id -> primary product id, and accumulate unique product ids for GRQ lookup
+    job_to_product = {}
+    product_ids = set()
+    for hit in all_hits:
+        src = hit.get("_source", {})
+        job_id = src.get("job", {}).get("job_id")
+        if not job_id:
+            continue
+        products = (
+            src.get("job", {})
+            .get("job_info", {})
+            .get("metrics", {})
+            .get("products_staged", [])
+            or []
+        )
+        pid = _pick_primary_product_id(products)
+        if pid:
+            job_to_product[job_id] = pid
+            product_ids.add(pid)
+
+    logging.info(
+        f"Collected {len(job_to_product)} job_ids with primary product, "
+        f"{len(product_ids)} unique products to resolve in GRQ"
+    )
+
+    md_by_id = fetch_grq_product_metadata(session, grq_url, list(product_ids))
+
+    hierarchical_groups = {}
+    unresolved = 0
+    for job_id, pid in job_to_product.items():
+        md = md_by_id.get(pid)
+        if not md:
+            unresolved += 1
+            continue
+        beam = md["beam_name"]
+        cov = md["coverage"]
+        acq = md["acquisition_mode"]
+        hierarchical_groups.setdefault(beam, {}).setdefault(cov, {}).setdefault(
+            acq, []
+        ).append(job_id)
+
+    if unresolved:
+        logging.warning(
+            f"{unresolved} job_ids had a staged product but no GRQ metadata match"
+        )
+
+    logging.info(
+        f"Found three-level hierarchical groups: {list(hierarchical_groups.keys())}"
+    )
+    for beam_name, coverages in hierarchical_groups.items():
+        logging.info(f"  {beam_name}: {list(coverages.keys())}")
+        for coverage, acquisition_modes in coverages.items():
+            logging.info(f"    {coverage}: {list(acquisition_modes.keys())}")
+
+    # Aggregate metrics per group -- same query as the regex-based path.
+    hierarchical_metrics = {}
+    for beam_name, coverages in hierarchical_groups.items():
+        hierarchical_metrics[beam_name] = {}
+        for coverage, acquisition_modes in coverages.items():
+            hierarchical_metrics[beam_name][coverage] = {}
+            for acquisition_mode, job_ids in acquisition_modes.items():
+                logging.info(
+                    f"Getting metrics for {beam_name} -> {coverage} -> {acquisition_mode} ({len(job_ids)} jobs)"
+                )
+                job_id_query = {
+                    "aggs": {
+                        "job_runtime": {"avg": {"field": "job.job_info.duration"}},
+                        "container_runtime": {
+                            "avg": {
+                                "field": "job.job_info.metrics.usage_stats.wall_time"
+                            }
+                        },
+                        "stage_in_size": {
+                            "avg": {
+                                "field": "job.job_info.metrics.inputs_localized.disk_usage"
+                            }
+                        },
+                        "stage_in_rate": {
+                            "avg": {
+                                "field": "job.job_info.metrics.inputs_localized.transfer_rate"
+                            }
+                        },
+                        "stage_out_size": {
+                            "avg": {
+                                "field": "job.job_info.metrics.products_staged.disk_usage"
+                            }
+                        },
+                        "stage_out_rate": {
+                            "avg": {
+                                "field": "job.job_info.metrics.products_staged.transfer_rate"
+                            }
+                        },
+                    },
+                    "size": 0,
+                    "track_total_hits": True,
+                    "query": {
+                        "bool": {
+                            "must": [
+                                {"match_all": {}},
+                                {
+                                    "query_string": {
+                                        "query": "type.keyword:job_info",
+                                        "analyze_wildcard": True,
+                                        "time_zone": "America/Los_Angeles",
+                                    }
+                                },
+                            ],
+                            "filter": [
+                                {"match_phrase": {"job_type.keyword": job_type}},
+                                {"match_phrase": {"job.job_info.status": 0}},
+                                {
+                                    "match_phrase": {
+                                        "job.job_info.facts.ec2_instance_type.keyword": instance_type
+                                    }
+                                },
+                                {
+                                    "range": {
+                                        "@timestamp": {
+                                            "gte": time_start,
+                                            "lte": time_end,
+                                            "format": "strict_date_optional_time",
+                                        }
+                                    }
+                                },
+                                {"terms": {"job.job_id.keyword": job_ids}},
+                            ],
+                        }
+                    },
+                }
+                headers = {"Content-Type": "application/json"}
+                resp = session.post(
+                    es_url, data=json.dumps(job_id_query), headers=headers, verify=False
+                )
+                if resp.status_code != 200:
+                    logging.warning(
+                        f"Failed to get metrics for {beam_name} -> {coverage} -> {acquisition_mode}: {resp.status_code}"
+                    )
+                    continue
+                result = resp.json()
+                aggs = result.get("aggregations", {})
+                hits_total = result.get("hits", {}).get("total", {}).get("value", 0)
+                if hits_total <= 0:
+                    continue
+                job_runtime_m = aggs.get("job_runtime", {}).get("value")
+                if job_runtime_m:
+                    job_runtime_m = job_runtime_m / 60
+                container_runtime_m = aggs.get("container_runtime", {}).get("value")
+                if container_runtime_m:
+                    container_runtime_m = container_runtime_m / 1000000000 / 60
+                stage_in_size_gb = aggs.get("stage_in_size", {}).get("value")
+                if stage_in_size_gb:
+                    stage_in_size_gb = stage_in_size_gb / 1073741824
+                stage_in_rate_mbps = aggs.get("stage_in_rate", {}).get("value")
+                if stage_in_rate_mbps:
+                    stage_in_rate_mbps = stage_in_rate_mbps / 1048576
+                stage_out_size_gb = aggs.get("stage_out_size", {}).get("value")
+                if stage_out_size_gb:
+                    stage_out_size_gb = stage_out_size_gb / 1073741824
+                stage_out_rate_mbps = aggs.get("stage_out_rate", {}).get("value")
+                if stage_out_rate_mbps:
+                    stage_out_rate_mbps = stage_out_rate_mbps / 1048576
+                hierarchical_metrics[beam_name][coverage][acquisition_mode] = {
+                    "job_runtime_m": job_runtime_m,
+                    "container_runtime_m": container_runtime_m,
+                    "stage_in_size_gb": stage_in_size_gb,
+                    "stage_in_rate_mbps": stage_in_rate_mbps,
+                    "stage_out_size_gb": stage_out_size_gb,
+                    "stage_out_rate_mbps": stage_out_rate_mbps,
+                    "count": hits_total,
+                }
+
+    return hierarchical_metrics
+
+
 def get_job_id_breakdown_aggregation(
     session,
     api_url,
@@ -865,7 +1166,13 @@ def get_three_level_hierarchical_breakdown(
 
 
 def get_job_breakdown_metrics(
-    session, es_url, dt_start, dt_end, breakdown_job_type, nisar_config_path=None
+    session,
+    es_url,
+    dt_start,
+    dt_end,
+    breakdown_job_type,
+    nisar_config_path=None,
+    grq_url=None,
 ):
     """
     Gets three-level hierarchical breakdown metrics: beam_name -> coverage -> acquisition_mode.
@@ -875,50 +1182,67 @@ def get_job_breakdown_metrics(
     @param dt_end: the end datetime
     @param breakdown_job_type: the job type to break down (e.g., "job-SCIFLO_RSLC:pcm_r4.0.7_pge_r4.1.0")
     @param nisar_config_path: path to the NISAR config file (not used in this version)
+    @param grq_url: base GRQ URL (e.g. https://es-grq:9200). When provided and the job_type
+                    is a GRQ-product PGE, breakdown dimensions are resolved from product metadata
+                    instead of regex-matching job_ids (required for r05.01.4+ job_id format).
     @return: dict of three-level hierarchical breakdown metrics
     """
 
     time_start = dt_start.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     time_end = dt_end.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
-    # First get sample job_ids to understand patterns
-    sample_job_ids = get_sample_job_ids(
-        session, es_url, time_start, time_end, breakdown_job_type
-    )
+    use_grq = bool(grq_url) and _job_type_uses_grq_breakdown(breakdown_job_type)
 
-    if not sample_job_ids:
-        logging.warning(f"No job_ids found for {breakdown_job_type}")
-        return {}
+    if not use_grq:
+        # Legacy path: parse beam_name/coverage/acquisition_mode out of job_id
+        sample_job_ids = get_sample_job_ids(
+            session, es_url, time_start, time_end, breakdown_job_type
+        )
 
-    # Analyze patterns
-    patterns, sample_extractions = parse_job_id_patterns(
-        sample_job_ids, breakdown_job_type
-    )
+        if not sample_job_ids:
+            logging.warning(f"No job_ids found for {breakdown_job_type}")
+            return {}
 
-    if not patterns:
-        logging.warning(f"No patterns found for {breakdown_job_type}")
-        return {}
+        patterns, sample_extractions = parse_job_id_patterns(
+            sample_job_ids, breakdown_job_type
+        )
 
-    # Get instance types for this job
+        if not patterns:
+            logging.warning(f"No patterns found for {breakdown_job_type}")
+            return {}
+
+        pattern_regex = patterns.get("beam_name")
+        if not pattern_regex:
+            return {}
+    else:
+        logging.info(
+            f"Using GRQ-backed breakdown for {breakdown_job_type} (grq_url={grq_url})"
+        )
+
     instance_types = get_instance_types_by_job_type(
         session, es_url, time_start, time_end, breakdown_job_type
     )
 
     hierarchical_metrics = {}
 
-    # Use three-level hierarchical breakdown: beam_name -> coverage -> acquisition_mode
-    pattern_regex = patterns.get("beam_name")  # All patterns use the same regex
+    logging.info(
+        "Using three-level hierarchical breakdown: beam_name -> coverage -> acquisition_mode"
+    )
 
-    if pattern_regex:
-        logging.info(
-            f"Using three-level hierarchical breakdown: beam_name -> coverage -> acquisition_mode"
-        )
+    for instance_type, instance_count in instance_types:
+        logging.info(f"  Processing instance type: {instance_type}")
 
-        # For each instance type
-        for instance_type, instance_count in instance_types:
-            logging.info(f"  Processing instance type: {instance_type}")
-
-            # Get three-level hierarchical breakdown metrics for this instance type
+        if use_grq:
+            instance_hierarchical = get_three_level_hierarchical_breakdown_via_grq(
+                session,
+                es_url,
+                grq_url,
+                time_start,
+                time_end,
+                breakdown_job_type,
+                instance_type,
+            )
+        else:
             instance_hierarchical = get_three_level_hierarchical_breakdown(
                 session,
                 es_url,
@@ -929,8 +1253,8 @@ def get_job_breakdown_metrics(
                 pattern_regex,
             )
 
-            if instance_hierarchical:
-                hierarchical_metrics[instance_type] = instance_hierarchical
+        if instance_hierarchical:
+            hierarchical_metrics[instance_type] = instance_hierarchical
 
     return hierarchical_metrics
 
@@ -1037,6 +1361,12 @@ if __name__ == "__main__":
         help="path to NISAR mixed modes config file",
         metavar="CONFIG_PATH",
     )
+    parser.add_argument(
+        "--grq_url",
+        dest="grq_url",
+        help="base GRQ URL (e.g. https://es-grq:9200) -- enables product-metadata breakdown for r05.01.4+ SCIFLO_{RSLC,GSLC,GCOV,INSAR,L3_SM}",
+        metavar="GRQ_URL",
+    )
 
     argsNamespace = parser.parse_args()
     args = vars(argsNamespace)
@@ -1067,6 +1397,7 @@ if __name__ == "__main__":
         raise Exception(f"missing argument breakdown_job")
 
     nisar_config = args["nisar_config"]
+    grq_url = args.get("grq_url")
 
     try:
         days_back = int(args["days_back"])
@@ -1141,7 +1472,13 @@ if __name__ == "__main__":
 
     # Get breakdown metrics using NISAR config
     breakdown_metrics = get_job_breakdown_metrics(
-        session, es_url, dt_start, dt_end, breakdown_job, nisar_config
+        session,
+        es_url,
+        dt_start,
+        dt_end,
+        breakdown_job,
+        nisar_config,
+        grq_url=grq_url,
     )
 
     if breakdown_metrics:
