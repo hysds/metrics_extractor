@@ -18,7 +18,6 @@
 #     --crid X05013 \
 #     --cluster POP1 \
 #     --es_url "https://localhost:9202/logstash-*/_search" \
-#     --grq_url "https://localhost:9203" \
 #     --netrc_os ~/dev/nisar/tmp/netrc-os-ops-pop1 \
 #     --version r05.01.3 \
 #     --days_back 200 \
@@ -27,12 +26,13 @@
 # Individual PGE job types are derived from --version (e.g., release-r05.01.3).
 # Override with --job_suffix_* if needed (e.g., L3_SM often has a -1 suffix).
 #
-# --grq_url is required for r05.01.4+ RSLC/GSLC/GCOV/INSAR/L3_SM breakdowns,
+# --grq_url is needed for r05.01.4+ RSLC/GSLC/GCOV/INSAR/L3_SM breakdowns,
 # where the beam_name/coverage/acquisition_mode dimensions are read from GRQ
-# product metadata instead of being regex-parsed out of the job_id. Set up a
-# second SSH tunnel: -L <local_port>:es-grq:9200, then pass the base URL
-# (no /_search, no index). For pre-r05.01.4 versions, omit --grq_url to use
-# the legacy job_id regex path.
+# product metadata rather than regex-parsed out of the job_id. On clustered
+# NISAR deployments (ES_CLUSTER_MODE=true — the modern default) the GRQ base
+# URL auto-derives from --es_url, so you don't have to pass it. Only set
+# --grq_url explicitly on non-clustered deployments where GRQ is a separate
+# ES instance behind a different tunnel (e.g. --grq_url https://localhost:9210).
 
 set -euo pipefail
 

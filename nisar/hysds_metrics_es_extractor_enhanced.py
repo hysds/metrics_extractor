@@ -198,6 +198,22 @@ def _job_type_uses_grq_breakdown(job_type):
     return any(p in job_type for p in _GRQ_PRODUCT_PGES)
 
 
+def _derive_grq_base_url(es_url):
+    """
+    Derive a GRQ base URL (scheme://netloc) from a metrics ES URL.
+
+    On NISAR clusters with ES_CLUSTER_MODE=true (the modern default), the
+    es-mozart / es-grq / es-metrics hostnames all front the same OS cluster,
+    so the metrics-ES endpoint serves grq_* indices too. This lets users
+    pass a single tunnel/URL and have GRQ-backed breakdown "just work".
+    For non-clustered deployments (rare/legacy), override with --grq_url.
+    """
+    parts = urlsplit(es_url)
+    if not parts.scheme or not parts.netloc:
+        return None
+    return f"{parts.scheme}://{parts.netloc}"
+
+
 def _pick_primary_product_id(products_staged):
     """Pick the science product id from a products_staged list."""
     if not products_staged:
@@ -1191,7 +1207,15 @@ def get_job_breakdown_metrics(
     time_start = dt_start.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     time_end = dt_end.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
-    use_grq = bool(grq_url) and _job_type_uses_grq_breakdown(breakdown_job_type)
+    is_grq_pge = _job_type_uses_grq_breakdown(breakdown_job_type)
+    if is_grq_pge and not grq_url:
+        grq_url = _derive_grq_base_url(es_url)
+        if grq_url:
+            logging.info(
+                f"--grq_url not provided; auto-derived {grq_url} from --es_url "
+                f"(assumes clustered OS; override --grq_url if metrics ES and GRQ are separate instances)"
+            )
+    use_grq = bool(grq_url) and is_grq_pge
 
     if not use_grq:
         # Legacy path: parse beam_name/coverage/acquisition_mode out of job_id
