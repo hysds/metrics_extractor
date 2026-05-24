@@ -18,6 +18,7 @@
 #     --crid X05013 \
 #     --cluster POP1 \
 #     --es_url "https://localhost:9202/logstash-*/_search" \
+#     --grq_url "https://localhost:9203" \
 #     --netrc_os ~/dev/nisar/tmp/netrc-os-ops-pop1 \
 #     --version r05.01.3 \
 #     --days_back 200 \
@@ -25,6 +26,13 @@
 #
 # Individual PGE job types are derived from --version (e.g., release-r05.01.3).
 # Override with --job_suffix_* if needed (e.g., L3_SM often has a -1 suffix).
+#
+# --grq_url is required for r05.01.4+ RSLC/GSLC/GCOV/INSAR/L3_SM breakdowns,
+# where the beam_name/coverage/acquisition_mode dimensions are read from GRQ
+# product metadata instead of being regex-parsed out of the job_id. Set up a
+# second SSH tunnel: -L <local_port>:es-grq:9200, then pass the base URL
+# (no /_search, no index). For pre-r05.01.4 versions, omit --grq_url to use
+# the legacy job_id regex path.
 
 set -euo pipefail
 
@@ -35,6 +43,7 @@ PYTHON="${PYTHON:-$HOME/dev/nisar/.venv/bin/python}"
 CRID=""
 CLUSTER=""
 ES_URL=""
+GRQ_URL=""
 NETRC_OS=""
 VERSION=""
 DAYS_BACK=200
@@ -62,6 +71,7 @@ while [[ $# -gt 0 ]]; do
         --crid) CRID="$2"; shift 2 ;;
         --cluster) CLUSTER="$2"; shift 2 ;;
         --es_url) ES_URL="$2"; shift 2 ;;
+        --grq_url) GRQ_URL="$2"; shift 2 ;;
         --netrc_os) NETRC_OS="$2"; shift 2 ;;
         --version) VERSION="$2"; shift 2 ;;
         --days_back) DAYS_BACK="$2"; shift 2 ;;
@@ -127,6 +137,7 @@ echo "  CRID:       $CRID"
 echo "  Cluster:    $CLUSTER"
 echo "  Version:    $VERSION"
 echo "  ES URL:     $ES_URL"
+echo "  GRQ URL:    ${GRQ_URL:-<not set — legacy job_id regex path>}"
 echo "  Days back:  $DAYS_BACK"
 echo "  Output dir: $OUTPUT_DIR"
 echo "============================================================"
@@ -148,11 +159,16 @@ for pge in "${PGE_TYPES[@]}"; do
             --nisar_config "$NISAR_CONFIG"
     else
         # Standard enhanced extractor (requires interactive stdin → pipe creds)
+        grq_args=()
+        if [[ -n "$GRQ_URL" ]]; then
+            grq_args+=(--grq_url "$GRQ_URL")
+        fi
         printf '%s\n%s\n' "$ES_USERNAME" "$ES_PASSWORD" | "$PYTHON" "$SCRIPT_DIR/hysds_metrics_es_extractor_enhanced.py" -v \
             -u "$ES_URL" \
             -b "$DAYS_BACK" \
             --breakdown_job "$job_type" \
-            --nisar_config "$NISAR_CONFIG"
+            --nisar_config "$NISAR_CONFIG" \
+            "${grq_args[@]}"
     fi
 done
 
